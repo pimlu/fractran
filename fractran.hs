@@ -17,6 +17,9 @@ import qualified Data.Sequence as Q
 
 import qualified CBuf as B
 
+type IntMap = M.Map Int Integer
+data CycleStep = Step IntMap | Leap Integer deriving (Eq, Show)
+
 naive :: [Rational] -> Integer -> [Integer]
 naive fs n = maybe [] (next . numerator) match where
   ps = map (*fromIntegral n) fs
@@ -52,7 +55,7 @@ factors n = fac primes n where
   fac (p:ps) k
     | k `rem` p == 0 = p : fac (p:ps) (k `div` p)
     | otherwise = fac ps k
-type IntMap = M.Map Int Integer
+
 times' :: IntMap -> (IntMap, IntMap) -> IntMap
 times' x (num, den) = M.fromList pairs where
   keys = S.toList $ S.fromList $ M.keys x ++ M.keys num ++ M.keys den
@@ -129,14 +132,14 @@ stateSplit :: IntMap -> IntMap -> (IntMap, IntMap)
 stateSplit sep frac = M.partitionWithKey part frac where
   part k a = a >= M.findWithDefault 0 k sep
 
-leap :: IntMap -> Q.Seq (IntMap, IntMap) -> (IntMap, IntMap) -> IntMap
-leap dmaxes prev state = assert (plogic == slogic) n where
+leap :: IntMap -> Q.Seq (IntMap, IntMap) -> (IntMap, IntMap) -> (Integer, IntMap)
+leap dmaxes prev state = assert (plogic == slogic) (steps, n) where
   lasti = Q.length prev - 1
   (pdata, plogic) = Q.index prev lasti
   (sdata, slogic) = state
   keys = M.keys $ M.union pdata sdata
 
-  steps = Q.take lasti prev
+  hist = toList $ Q.take lasti prev
   cs = [s | k <- keys, let s=life k, s>=0]
   diffs = fprod pdata $ M.map (0-) sdata
   life k
@@ -146,12 +149,12 @@ leap dmaxes prev state = assert (plogic == slogic) n where
     | otherwise = rem `div` diff
     where
       sk = get0 k sdata
-      dip = minimum $ 0:[get0 k s - sk | (s,_) <- toList steps]
+      dip = minimum $ 0:[get0 k s - sk | (s,_) <- hist]
       rem = sk + dip - (dmaxes M.! k)
       diff = get0 k diffs
-  newdata = case cs of
+  (steps, newdata) = case cs of
     [] -> error "Nonterminating cycle detected"
-    _ -> fprod sdata $ M.map (*(-minimum cs)) diffs
+    _ -> let s = -minimum cs in (s, fprod sdata $ M.map (*s) diffs)
   n = fprod slogic newdata
 
 cycles :: Int -> [Rational] -> Integer -> [IntMap]
@@ -171,7 +174,8 @@ cycles' cyclen fracs init = tail $ eval ifs obuf init where
     next
       | looping = nextLoop :: [IntMap]
       | otherwise = maybe [] nextFrac match
-    nextLoop = eval ifs obuf (leap dmaxes (fromJust prev) state)
+    (leapSteps, leapState) = leap dmaxes (fromJust prev) state
+    nextLoop = eval ifs obuf leapState
     nextFrac (i, f) = eval (opts ! i) (B.insert state buf) $ times n f
 
 
