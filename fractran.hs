@@ -134,7 +134,8 @@ stateSplit sep frac = M.partitionWithKey part frac where
 
 leap :: IntMap -> Q.Seq (IntMap, IntMap) -> (IntMap, IntMap) -> (Integer, IntMap)
 leap dmaxes prev state = assert (plogic == slogic) (steps, n) where
-  lasti = Q.length prev - 1
+  len = Q.length prev
+  lasti = len - 1
   (pdata, plogic) = Q.index prev lasti
   (sdata, slogic) = state
   keys = M.keys $ M.union pdata sdata
@@ -154,11 +155,14 @@ leap dmaxes prev state = assert (plogic == slogic) (steps, n) where
       diff = get0 k diffs
   (steps, newdata) = case cs of
     [] -> error "Nonterminating cycle detected"
-    _ -> let s = -minimum cs in (s, fprod sdata $ M.map (*s) diffs)
+    _ -> let s = minimum cs in
+        (fromIntegral len * s,
+        fprod sdata $ M.map (* (-s)) diffs)
   n = fprod slogic newdata
 
-cycles :: Int -> [Rational] -> Integer -> [IntMap]
+cycles :: Int -> [Rational] -> Integer -> [CycleStep]
 cycles cyclen fracs init = cycles' cyclen fracs $ facmap init
+cycles' :: Int -> [Rational] -> IntMap -> [CycleStep]
 cycles' cyclen fracs init = tail $ eval ifs obuf init where
   obuf = (B.cbuf cyclen snd []) :: B.CBuf (IntMap, IntMap) IntMap
   fmaps = [(facmap $ numerator f, facmap $ denominator f) | f<-fracs] :: [(IntMap, IntMap)]
@@ -166,19 +170,24 @@ cycles' cyclen fracs init = tail $ eval ifs obuf init where
   dthresh = M.map (1* toInteger cyclen *) dmaxes
   ifs = (zip [0..] fmaps) :: [(Int, (IntMap, IntMap))]
   opts = optArr fmaps
-  eval fs buf n = n : next where
+  eval fs buf n = res where
     state = stateSplit dthresh n
     prev = B.getRange state buf
     looping = isJust prev
     match = (find (compat n . snd) fs) :: Maybe (Int, (IntMap, IntMap))
-    next
-      | looping = nextLoop :: [IntMap]
-      | otherwise = maybe [] nextFrac match
+    res
+      | looping = [Step n | leapSteps > 0] ++ Leap leapSteps : nextLoop
+      | otherwise = Step n : maybe [] nextFrac match
     (leapSteps, leapState) = leap dmaxes (fromJust prev) state
     nextLoop = eval ifs obuf leapState
     nextFrac (i, f) = eval (opts ! i) (B.insert state buf) $ times n f
 
-
+cyclesIM :: Int -> [Rational] -> Integer -> [IntMap]
+cyclesIM cl f i = [im | Step im <- cs]
+    where cs = cycles cl f i
+cyclesIM' :: Int -> [Rational] -> IntMap -> [IntMap]
+cyclesIM' cl f i = [im | Step im <- cs]
+    where cs = cycles' cl f i
 
 mapGetPow k vs = [ v M.! k | v<-filter match vs] where
   match v = M.member k v && (all good $ M.assocs v)
@@ -220,7 +229,7 @@ dopg view interp k = liveout $ take k $ view 2 $ interp primegame 2
 hammingMain k = do
   liveout $ powers 13 $ (:[]) . last $ naive hamming $ 2^(2^k-1)
 hammingMain' k = do
-  liveout $ mapGetPow 13 $ (:[]) . last $ (cycles' 2) hamming $
+  liveout $ mapGetPow 13 $ (:[]) . last $ (cyclesIM' 2) hamming $
     M.fromList [(2, (2^k-1))]
 
 ftin = M.fromList [(3,2^6*3^6), (5,475), (199,1)]
@@ -237,13 +246,13 @@ smartSelfInterp method inp = do
 demo = do
   let smartpg = dopg mapGetPow
   putStrLn "Naive with 20 primes:"
-  dopg powers naive 30
+  dopg powers naive 20
   putStrLn "Register based with 50 primes:"
   smartpg regBased 50
   putStrLn "Fraction optimized with 50 primes:"
   smartpg fracOpt 50
   putStrLn "Cycle detection with 100 primes:"
-  smartpg (cycles 2) 100
+  smartpg (cyclesIM 2) 100
   putStrLn "Naive hamming 2^17-1:"
   hammingMain 17
   putStrLn "Cycle hamming 2^2400-1:"
@@ -255,8 +264,8 @@ demo2 = do
   putStrLn "Fraction optimized on 1 fraction input:"
   smartSelfInterp fracOpt' ftin
   putStrLn "Cycle detection on 1 fraction input:"
-  smartSelfInterp (cycles' 16) ftin
+  smartSelfInterp (cyclesIM' 16) ftin
   putStrLn "Cycle detection on 2 fraction input:"
-  smartSelfInterp (cycles' 16) ftin'
+  smartSelfInterp (cyclesIM' 16) ftin'
 
 main = demo
