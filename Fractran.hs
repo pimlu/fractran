@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 module Fractran where
 
 import Data.Ratio
@@ -110,7 +111,7 @@ leap dmaxes prev state = assert (plogic == slogic) (steps, n) where
   (steps, newdata) = case cs of
     [] -> error "Nonterminating cycle detected"
     _ -> let s = minimum cs in
-        (fromIntegral len * s,
+        (fromIntegral len * s - 1,
         fprod sdata $ M.map (* (-s)) diffs)
   n = fprod slogic newdata
 
@@ -124,17 +125,24 @@ cycles' cyclen fracs init = tail $ eval ifs obuf init where
   dthresh = M.map (1* toInteger cyclen *) dmaxes
   ifs = (zip [0..] fmaps) :: [(Int, (IntMap, IntMap))]
   opts = optArr fmaps
-  eval fs buf n = res where
+  eval fs buf n = Step n : next where
     state = stateSplit dthresh n
     prev = B.getRange state buf
     looping = isJust prev
     match = (find (compat n . snd) fs) :: Maybe (Int, (IntMap, IntMap))
-    res
-      | looping = [Step n | leapSteps > 0] ++ Leap leapSteps : nextLoop
-      | otherwise = Step n : maybe [] nextFrac match
+    next
+      | looping && leapSteps <= 0 = nextLoop
+      | looping = Leap leapSteps : nextLoop
+      | otherwise = maybe [] nextFrac match
     (leapSteps, leapState) = leap dmaxes (fromJust prev) state
     nextLoop = eval ifs obuf leapState
     nextFrac (i, f) = eval (opts ! i) (B.insert state buf) $ times n f
+
+stepCount :: [CycleStep] -> [(Integer, IntMap)]
+stepCount cs = [(count, im) | (count, Just im) <- scs] where
+  scs = scanl reduce (0, Nothing) cs
+  reduce (!count, _) (Step im) = (count+1, Just im)
+  reduce (!count, _) (Leap k) = (count+k, Nothing)
 
 mapGetPow k vs = [ v M.! k | v<-filter match vs] where
   match v = M.member k v && (all good $ M.assocs v)

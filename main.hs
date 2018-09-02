@@ -6,6 +6,7 @@ import GHC.Integer.Logarithms
 import qualified Data.Map.Strict as M
 import System.IO
 import Data.Char
+import Data.Maybe
 
 import Fractran
 import Others
@@ -51,10 +52,17 @@ dopg view interp k = liveout $ take k $ view 2 $ interp primegame 2
 
 
 hammingMain k = do
-  liveout $ powers 13 $ (:[]) . last $ naive hamming $ 2^(2^k-1)
+  let ham = naive hamming $ 2^(2^k-1)
+  putStrLn $ (show $ length ham) ++ " iterations"
+  liveout $ powers 13 $ (:[]) . last $ ham
+hammingMainFO k = do
+  let ham = zip [1..] $ regBased' hamming $ M.fromList [(2, (2^k-1))]
+  putStrLn $ (show $ fst $ last $ ham) ++ " iterations"
+  liveout $ mapGetPow 13 $ (:[]) . snd . last $ ham
 hammingMain' k = do
-  liveout $ mapGetPow 13 $ (:[]) . last $ (cyclesIM' 2) hamming $
-    M.fromList [(2, (2^k-1))]
+  let ham = stepCount $ (cycles' 2) hamming $ M.fromList [(2, (2^k-1))]
+  putStrLn $ (show $ fst $ last $ ham) ++ " iterations"
+  liveout $ mapGetPow 13 $ (:[]) . snd . last $ ham
 
 ftin = M.fromList [(3,2^6*3^6), (5,475), (199,1)]
 ftin' = M.fromList [(3,3^1*5^1), (5,5211222), (199,1)]
@@ -71,16 +79,18 @@ demo = do
   let smartpg = dopg mapGetPow
   putStrLn "Naive with 20 primes:"
   dopg powers naive' 20
-  putStrLn "Register based with 50 primes:"
-  smartpg regBased 50
-  putStrLn "Fraction optimized with 50 primes:"
-  smartpg fracOpt 50
-  putStrLn "Cycle detection with 100 primes:"
-  smartpg (cyclesIM 2) 100
-  putStrLn "Naive hamming 2^17-1:"
-  hammingMain 17
-  putStrLn "Cycle hamming 2^2400-1:"
-  hammingMain' 2400
+  putStrLn "Register based with 30 primes:"
+  smartpg regBased 30
+  putStrLn "Fraction optimized with 30 primes:"
+  smartpg fracOpt 30
+  putStrLn "Cycle detection with 50 primes:"
+  smartpg (cyclesIM 2) 50
+  putStrLn "Naive hamming 2^16-1:"
+  hammingMain 16
+  putStrLn "Cycle hamming 2^16-1:"
+  hammingMain' 16
+  putStrLn "Cycle hamming 2^1000-1:"
+  hammingMain' 1000
 
 demo2 = do
   putStrLn "Naive on 1 fraction input:"

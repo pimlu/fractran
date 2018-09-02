@@ -1,4 +1,7 @@
+.DS_Store
 *.hi
 *.o
+browser.js
+*.jsmod
 fractran
 .vscode/
