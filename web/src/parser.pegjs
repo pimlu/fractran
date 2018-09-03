@@ -1,6 +1,5 @@
 {
-  const BN = require('bn.js');
-  window.BN = BN;
+  var BN = require('bn.js');
 }
 
 ProgInput = Calc
@@ -56,7 +55,7 @@ Factor
 Integer "integer"
   =  _ bin:([01]+) "b" { return new BN(bin.join(''), 2)}
   / _ hex:([0-9a-fA-F]+) "h" { return new BN(hex.join(''), 16)}
-  / _ [0-9]+ { return new BN(text()); }
+  / _ num:([0-9]+) { return new BN(num.join('')); }
 
 
 _ "spaces"
