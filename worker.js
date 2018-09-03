@@ -17,9 +17,17 @@ onmessage = function(e) {
       out: fn(program, input)
     });
   } catch(err) {
+    if(err.message && (err.message.includes('too much recursion') ||
+      err.message.includes('call stack size exceeded'))) {
+      err = {
+        message: 'Haste stack overflow\'d while running our Haskell code. :( '+
+         'This is a known issue with Haste, if you have large inputs run the '+
+         'Haskell code natively, it\'ll be faster and not break.'
+      };
+    }
     postMessage({
       good: false,
-      err: err
+      err: err.message || ''+err
     });
   }
   close();
