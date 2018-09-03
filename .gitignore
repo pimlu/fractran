@@ -1,7 +1,11 @@
 .DS_Store
 *.hi
 *.o
-browser.js
 *.jsmod
 fractran
 .vscode/
+web/node_modules
+web/dist/fractran.js
+*.bundle.js
+*.bundle.js.map
+webpack-stats.json
