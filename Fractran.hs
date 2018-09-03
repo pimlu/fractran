@@ -30,6 +30,8 @@ minusBy cmp = loop
           LT -> x : loop xs (y:ys)
           EQ ->     loop xs (y:ys)
           GT ->     loop (x:xs) ys
+
+primes :: [Integer]
 primes = eratos [2..] where
   eratos []     = []
   eratos (p:xs) = p : eratos (xs `minus` [p*p, p*p+p..])
@@ -39,6 +41,15 @@ factors n = fac primes n where
   fac (p:ps) k
     | k `rem` p == 0 = p : fac (p:ps) (k `div` p)
     | otherwise = fac ps k
+
+isPrime :: Integer -> Bool
+isPrime n = head (dropWhile (< n) primes) == n
+
+validateIM :: IntMap -> IntMap
+validateIM im = maybe im throw comp where
+  comp = find (not . isPrime . fromIntegral) $ M.keys im
+  throw c = error $ show c ++ " is not a real prime factor in the input."
+
 
 times :: IntMap -> (IntMap, IntMap) -> IntMap
 times x (num, den) = fprod (fdiv x den) num
@@ -63,7 +74,7 @@ whenMaybe _ False = Nothing
 whenMaybe ma True = Just ma
 
 optArr :: [(IntMap, IntMap)] -> Array Int [(Int, (IntMap, IntMap))]
-optArr fs = {-trace msg $-} listArray (0, length fs - 1) opts where
+optArr fs = listArray (0, length fs - 1) opts where
   ifs = zip [0..] fs
   opts = [opt i f | (i,f) <- ifs]
   opt i f = let (pre,post) = splitAt i ifs in (preOpt f pre ++ post)
@@ -73,7 +84,7 @@ optArr fs = {-trace msg $-} listArray (0, length fs - 1) opts where
 
 fracOpt :: [Rational] -> Integer -> [IntMap]
 fracOpt fracs init = fracOpt' fracs $ facmap init
-fracOpt' fracs init = eval ifs init  where
+fracOpt' fracs init = eval ifs $ validateIM init where
   fmaps = [(facmap $ numerator f, facmap $ denominator f) | f<-fracs]
   ifs = (zip [0..] fmaps) :: [(Int, (IntMap, IntMap))]
   opts = optArr fmaps
@@ -106,10 +117,11 @@ leap dmaxes prev state = assert (plogic == slogic) (steps, n) where
     where
       sk = get0 k sdata
       dip = minimum $ 0:[get0 k s - sk | (s,_) <- hist]
-      rem = sk + dip - (dmaxes M.! k)
+      rem = sk + dip - (get0 k dmaxes)
       diff = get0 k diffs
   (steps, newdata) = case cs of
-    [] -> error "Nonterminating cycle detected"
+    [] -> error ("Nonterminating cycle detected, state: "++show (fprod pdata plogic)++
+      ".  This means the program entered an infinite loop.")
     _ -> let s = minimum cs in
         (fromIntegral len * s - 1,
         fprod sdata $ M.map (* (-s)) diffs)
@@ -118,7 +130,7 @@ leap dmaxes prev state = assert (plogic == slogic) (steps, n) where
 cycles :: Int -> [Rational] -> Integer -> [CycleStep]
 cycles cyclen fracs init = cycles' cyclen fracs $ facmap init
 cycles' :: Int -> [Rational] -> IntMap -> [CycleStep]
-cycles' cyclen fracs init = tail $ eval ifs obuf init where
+cycles' cyclen fracs init = tail $ eval ifs obuf $ validateIM init where
   obuf = (B.cbuf cyclen snd []) :: B.CBuf (IntMap, IntMap) IntMap
   fmaps = [(facmap $ numerator f, facmap $ denominator f) | f<-fracs] :: [(IntMap, IntMap)]
   dmaxes =  M.unionsWith max $ map snd fmaps

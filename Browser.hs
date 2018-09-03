@@ -18,7 +18,7 @@ run fn fstr input = show $ last $ fn fracs imap where
 runF :: ([Rational] -> Integer -> [(Integer, IntMap)]) -> String -> String -> String
 runF fn fstr input = show $ last $ fn fracs i where
   fracs = read fstr
-  i =  read input
+  i = read input
 
 runReg :: String -> String -> String
 runReg = run reg where
