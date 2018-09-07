@@ -24,7 +24,12 @@ let styles = theme => ({
     paddingTop: theme.spacing.unit,
     paddingBottom: theme.spacing.unit*3,
     maxWidth: 600,
-    margin: theme.spacing.unit*2+'px auto'
+    margin: theme.spacing.unit*2+'px auto',
+    [theme.breakpoints.down(600)]: {
+      boxShadow: 'none',
+      padding: 0,
+      margin: 0
+    }
   },
   mbot: {
     width: theme.spacing.unit*8,
@@ -157,7 +162,7 @@ class App extends React.Component {
           helpText={programHelp}
           onChange={(i, p) => this.progFrChange(i, p)} />
           <Grid container>
-            <Grid item xs={6}>
+            <div>
               <FormControlLabel
                 control={
                   <Checkbox
@@ -173,8 +178,9 @@ class App extends React.Component {
                 value={useCycles ? cycleHist : 0}
                 inputProps={{min: '1', max: '99', step: '1' }}
                 disabled={!useCycles} onChange={this.handleText('cycleHist')}/>
-            </Grid>
-            <Grid item xs={6} className={classes.right}>
+            </div>
+            <Grid item xs></Grid>
+            <div className={classes.right}>
               <Fade
                 in={!!worker}
                 style={{
@@ -189,7 +195,7 @@ class App extends React.Component {
                 onClick={() => this.toggleRun()}>
                   {worker ? 'STOP' : 'RUN'}
                 </Button>
-            </Grid>
+            </div>
           </Grid>
           <Divider className={classes.sep}/>
           <Typography gutterBottom className={oldOutput ? classes.faded : ''}>
