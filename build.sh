@@ -17,7 +17,7 @@ if [ "$1" = '--browser' ]; then
     ahc-link --browser --input-hs src/main.hs --output-directory browser_test --debug
 else
   if [ "$1" = 'clean' ]; then
-    rm -r out;
+    rm -rf out;
     exit 0
   fi
   mkdir -p out
