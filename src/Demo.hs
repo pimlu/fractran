@@ -1,4 +1,5 @@
 {-# LANGUAGE MagicHash #-}
+module Demo where
 
 import Data.Ratio
 import GHC.Exts
@@ -101,5 +102,3 @@ demo2 = do
   smartSelfInterp (cyclesIM' 16) ftin
   putStrLn "Cycle detection on 2 fraction input:"
   smartSelfInterp (cyclesIM' 16) ftin'
-
-main = demo
