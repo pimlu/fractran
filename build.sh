@@ -8,18 +8,19 @@ cd "$DIR"
 
 if [ "$1" = '--browser' ]; then
   if [ "$2" = 'clean' ]; then
-    rm -rf browser_test;
+    rm -rf web/gen;
     rm -f src/*.hi src/*.o
     exit 0
   fi
-  mkdir -p browser_test
+  mkdir -p web/gen
   docker run --rm -it -v $DIR:/mirror -w /mirror terrorjack/asterius \
-    ahc-link --browser --input-hs src/main.hs --output-directory browser_test --debug
+    ahc-link --browser --no-main --ghc-option -O2 --input-hs src/Browser.hs \
+    --output-directory web/gen --export-function=hsRunDynamic
 else
   if [ "$1" = 'clean' ]; then
     rm -rf out;
     exit 0
   fi
   mkdir -p out
-  ghc --make -O2 src/main.hs -isrc -odir out -hidir out -o fractran
+  ghc --make -prof -fprof-auto src/main.hs -isrc -odir out -hidir out -o fractran
 fi

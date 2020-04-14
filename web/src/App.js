@@ -16,6 +16,7 @@ import Checkbox from '@material-ui/core/Checkbox';
 
 
 import ParseInput from './ParseInput';
+import FractranWorker from './fractran.worker';
 
 
 let styles = theme => ({
@@ -31,11 +32,13 @@ let styles = theme => ({
       margin: 0
     }
   },
+  inlineLbl: {
+    marginTop: theme.spacing.unit*1.5
+  },
   mbot: {
     width: theme.spacing.unit*8,
   },
   inlineBtn: {
-    height: theme.spacing.unit*3,
     marginLeft: theme.spacing.unit,
     marginTop: theme.spacing.unit*2
   },
@@ -127,7 +130,7 @@ class App extends React.Component {
         worker.terminate();
         worker = null;
       } else {
-        worker = new Worker('worker.js');
+        worker = new FractranWorker();
         worker.onmessage = e => this.handleWorker(e);
         worker.postMessage({
           input: progInParsed,
@@ -162,8 +165,8 @@ class App extends React.Component {
           helpText={programHelp}
           onChange={(i, p) => this.progFrChange(i, p)} />
           <Grid container>
-            <div>
               <FormControlLabel
+                className={classes.inlineLbl}
                 control={
                   <Checkbox
                     checked={useCycles}
@@ -178,7 +181,6 @@ class App extends React.Component {
                 value={useCycles ? cycleHist : 0}
                 inputProps={{min: '1', max: '99', step: '1' }}
                 disabled={!useCycles} onChange={this.handleText('cycleHist')}/>
-            </div>
             <Grid item xs></Grid>
             <div className={classes.right}>
               <Fade

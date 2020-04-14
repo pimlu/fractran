@@ -5,7 +5,9 @@
 fractran
 .vscode/
 web/node_modules
-web/dist/fractran.js
+web/gen
+web/dist
+!web/dist/index.html
 *.bundle.js
 *.bundle.js.map
 webpack-stats.json

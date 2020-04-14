@@ -1,12 +1,15 @@
 const path = require('path');
 module.exports = {
   entry: {
-    main: './src/main.js'
+    main: './src/main.js',
   },
   mode: 'development',
   devtool: 'source-map',
   devServer: {
     contentBase: './dist'
+  },
+  node: {
+    fs: 'empty'
   },
   module: {
     rules: [
@@ -22,11 +25,21 @@ module.exports = {
         use: {
           loader: 'pegjs-loader?allowedStartRules[]=ProgInput,allowedStartRules[]=ProgFracs'
         }
+      },
+      {
+        test: /\.wasm$/,
+        type: "javascript/auto",
+        loader: "file-loader",
+      },
+      {
+        test: /\.worker\.js$/,
+        use: { loader: 'worker-loader' }
       }
     ]
   },
   output: {
       filename: '[name].bundle.js',
-      path: path.resolve(__dirname, 'dist')
+      path: path.resolve(__dirname, 'dist'),
+      globalObject: 'this'
   },
 };
