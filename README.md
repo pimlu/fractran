@@ -13,8 +13,12 @@ Here's the implementation with some demo (hard coded) FRACTRAN programs called i
 
 You need an installation of GHC. Then run `./build.sh` to compile, or run `./build.sh clean` to remove the build products.  Then to run the demo, run `./fractran`.
 
+To build for the browser, there are more steps. You need to install docker and run `./build.sh --browser` to first populate `web/gen`. Webpack depends on the JS output from Asterius which gets dumped to that directory. Then cd into `web` and run `yarn` which will install the NPM package dependencies.  You then should be able to run `yarn run serve`.
+
+There are some optional mods you can make to the Asterius build to improve the result: a) You can put a proper polyfill of `setImmediate` in `gen/rts.setImmediate.js` to greatly increase the running speed and b) Remove `import('fs')` from `gen/rts.node.mjs` which gets rid of an empty bundle in the webpack output.
+
 ## Whitepaper with proofs, benchmarks
-[Here.](termpd.pdf)
+[Here.](termpd.pdf) It's not human readable though.
 
 ## License
-This code is useless anyway, it's MIT.  Would be nice to get attribution if something interesting were to (somehow) happen though.
+MIT.  Would be nice to get attribution if something interesting were to (somehow) happen though.
