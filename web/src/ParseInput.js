@@ -62,10 +62,10 @@ class ParseInput extends React.Component {
         open={open}
         onClose={() => this.setState({open: false})}>
         <div className={classes.modal}>
-          <Typography variant="title" id="modal-title">
+          <Typography variant="h6" id="modal-title">
             {modalTitle}
           </Typography>
-          <Typography variant="subheading" id="modal-description">
+          <Typography variant="body1" id="modal-description">
             {helpText}
           </Typography>
         </div>

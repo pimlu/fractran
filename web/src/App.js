@@ -64,7 +64,7 @@ let styles = theme => ({
   }
 });
 
-let inputHelp =' You have two options for input.  The preferred option is '+
+let inputHelp ='You have two options for input.  The preferred option is '+
   'factored input, where you give a list of comma separated power pairs; for '+
   'example:\n\n[2,3], [3,7] becomes 2^3*3^7 = 17496.\n\nAlternatively, you '+
   'can directly input 17496 (or even 2^3*3^7), but these inputs will be '+
