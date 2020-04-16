@@ -14,18 +14,20 @@ import Fade from '@material-ui/core/Fade';
 import FormControlLabel from '@material-ui/core/FormControlLabel';
 import Checkbox from '@material-ui/core/Checkbox';
 
-
-import ParseInput from './ParseInput';
+import examples from './examples';
 import FractranWorker from './fractran.worker';
+import MenuButton from './MenuButton';
+import ParseInput from './ParseInput';
+import parser from './parser';
 
 
 let styles = theme => ({
   root: {
     ...theme.mixins.gutters(),
-    paddingTop: theme.spacing.unit,
-    paddingBottom: theme.spacing.unit*3,
+    paddingTop: theme.spacing(),
+    paddingBottom: theme.spacing(3),
     maxWidth: 600,
-    margin: theme.spacing.unit*2+'px auto',
+    margin: theme.spacing(2)+'px auto',
     [theme.breakpoints.down(600)]: {
       boxShadow: 'none',
       padding: 0,
@@ -33,25 +35,26 @@ let styles = theme => ({
     }
   },
   inlineLbl: {
-    marginTop: theme.spacing.unit*1.5
+    marginTop: theme.spacing(1.5)
   },
   mbot: {
-    width: theme.spacing.unit*8,
+    width: theme.spacing(8),
   },
   inlineBtn: {
-    marginLeft: theme.spacing.unit,
-    marginTop: theme.spacing.unit*2
+    marginLeft: theme.spacing(),
+    marginTop: theme.spacing(2)
   },
   progress: {
-    marginRight: theme.spacing.unit*2,
+    marginRight: theme.spacing(2),
     position: 'relative',
-    top: theme.spacing.unit*2
+    top: theme.spacing(2)
   },
   link: {
+    color: 'rgba(0, 0, 0, 0.54);',
     textDecoration: 'none'
   },
   sep: {
-    margin: theme.spacing.unit*4+'px 0'
+    margin: theme.spacing(4)+'px 0'
   },
   faded: {
     opacity: 0.5
@@ -73,28 +76,53 @@ let programHelp = 'Programs are a list of fractions separated by newlines or '+
   'divisions and I wanted to make the separation clear.\n\nSo 2/3 % 3/2 '+
   'becomes 0 % 1.';
 
-let hammingIn = '[2, 1100001b]';
-let hamming = '3*11 % 2^2*5,5 % 11,13 % 2*5,1 % 5,2 % 3,2*5 % 7,7 % 2'
-  .replace(/,/g, '\n');
+
+let exampleKeys = Object.keys(examples);
 
 class App extends React.Component {
   state = {
-    progIn: hammingIn,
-    progFr: hamming,
-    progInParsed: null,
-    progFrParsed: null,
+    parsers: {
+      input: parser('ProgInput'),
+      fracs: parser('ProgFracs')
+    },
+    parserTxt: {
+      input: '',
+      fracs: ''
+    },
+    parserSt: {
+      input: parser.initSt,
+      fracs: parser.initSt
+    },
     useCycles: true,
-    cycleHist: '2',
+    cycleHist: '4',
     output: '[no output]',
     oldOutput: true,
     worker: null
   }
 
-  progInChange(progIn, progInParsed) {
-    this.setState({progIn, progInParsed});
+  componentDidMount() {
+    this.loadExample('Hamming weight (small)');
   }
-  progFrChange(progFr, progFrParsed) {
-    this.setState({progFr, progFrParsed});
+
+  loadExample(name) {
+    let {input, program} = examples[name];
+    this.parserChange('input', input);
+    this.parserChange('fracs', program);
+  }
+
+  parserChange(key, text) {
+    this.setState(state => {
+      let {parsers, parserTxt, parserSt} = state;
+      return {
+        parserTxt: {...parserTxt, [key]: text},
+        parserSt: {...parserSt, [key]: parsers[key](text)}
+      }
+    });
+  }
+  isValid() {
+    let {worker, parserSt} = this.state;
+    let invalid = parserSt.input.error || parserSt.fracs.error;
+    return !!(worker || !invalid);
   }
   handleChecked(name) {
     return ({target}) => this.setState({[name]: target.checked});
@@ -116,7 +144,7 @@ class App extends React.Component {
       //TODO modal
       this.setState({
         worker: null,
-        output: 'Error: '+data.err,
+        output: data.err,
         oldOutput: false
       });
     }
@@ -124,7 +152,7 @@ class App extends React.Component {
 
   toggleRun() {
     this.setState(state => {
-      let {worker, progInParsed, progFrParsed,
+      let {worker, parserSt,
         useCycles, cycleHist} = state;
       if(worker) {
         worker.terminate();
@@ -133,9 +161,9 @@ class App extends React.Component {
         worker = new FractranWorker();
         worker.onmessage = e => this.handleWorker(e);
         worker.postMessage({
-          input: progInParsed,
-          program: progFrParsed,
-          len: useCycles ? cycleHist+1 : 0
+          input: parserSt.input.parsed,
+          program: parserSt.fracs.parsed,
+          len: useCycles ? (+cycleHist)+1 : 0
         });
       }
       return {
@@ -147,62 +175,74 @@ class App extends React.Component {
 
   render() {
     let {classes} = this.props;
-    let {progIn, progFr, useCycles, cycleHist,
+    let {parserTxt, parserSt, useCycles, cycleHist,
       output, oldOutput, worker} = this.state;
     return <div>
       <Paper className={classes.root} elevation={1}>
-        <a className={classes.link} href="https://github.com/pimlu/fractran">
-          <Typography variant="display1" gutterBottom align="right">
-           Fast FRACTRAN
-          </Typography>
-        </a>
+        <Grid
+          container
+          direction="row"
+          justify="space-between"
+          alignItems="flex-start"
+        >
+          <MenuButton text="Load Example"
+            options={exampleKeys}
+            tooltip="Overwrites your program!"
+            onSelect={v => this.loadExample(v)}/>
+          <a className={classes.link} href="https://github.com/pimlu/fractran">
+            <Typography variant="h4" gutterBottom align="right">
+            Fast FRACTRAN
+            </Typography>
+          </a>
+        </Grid>
         <ParseInput label="Input"
-          value={progIn} rule="ProgInput"
+          value={parserTxt.input} error={parserSt.input.error}
           helpText={inputHelp}
-          onChange={(i, p) => this.progInChange(i, p)} />
+          onChange={v => this.parserChange('input', v)} />
         <ParseInput label="Program" multi={true}
-          value={progFr} rule="ProgFracs"
+          value={parserTxt.fracs} error={parserSt.fracs.error}
           helpText={programHelp}
-          onChange={(i, p) => this.progFrChange(i, p)} />
-          <Grid container>
-              <FormControlLabel
-                className={classes.inlineLbl}
-                control={
-                  <Checkbox
-                    checked={useCycles}
-                    onChange={this.handleChecked('useCycles')}
-                  />
-                }
-                label="Cycle detection"
-              />
-              <TextField label="Length" type="number"
-                className={classes.mbot}
-                margin="dense"
-                value={useCycles ? cycleHist : 0}
-                inputProps={{min: '1', max: '99', step: '1' }}
-                disabled={!useCycles} onChange={this.handleText('cycleHist')}/>
-            <Grid item xs></Grid>
-            <div className={classes.right}>
-              <Fade
-                in={!!worker}
-                style={{
-                  transitionDelay: worker ? '500ms' : '0ms',
-                }}
-                unmountOnExit>
-                <CircularProgress className={classes.progress}
-                  color="secondary" size={24} />
-              </Fade>
-              <Button variant="contained" className={classes.inlineBtn}
-                color={worker ? 'secondary' : 'primary'}
-                onClick={() => this.toggleRun()}>
-                  {worker ? 'STOP' : 'RUN'}
-                </Button>
-            </div>
-          </Grid>
-          <Divider className={classes.sep}/>
-          <Typography gutterBottom className={oldOutput ? classes.faded : ''}>
-            {output}
-          </Typography>
+          onChange={v => this.parserChange('fracs', v)} />
+        <Grid container>
+            <FormControlLabel
+              className={classes.inlineLbl}
+              control={
+                <Checkbox
+                  checked={useCycles}
+                  onChange={this.handleChecked('useCycles')}
+                />
+              }
+              label="Cycle detection"
+            />
+            <TextField label="Length" type="number"
+              className={classes.mbot}
+              margin="dense"
+              value={useCycles ? cycleHist : 0}
+              inputProps={{min: '1', max: '99', step: '1' }}
+              disabled={!useCycles} onChange={this.handleText('cycleHist')}/>
+          <Grid item xs></Grid>
+          <div className={classes.right}>
+            <Fade
+              in={!!worker}
+              style={{
+                transitionDelay: worker ? '500ms' : '0ms',
+              }}
+              unmountOnExit>
+              <CircularProgress className={classes.progress}
+                color="secondary" size={24} />
+            </Fade>
+            <Button variant="contained" className={classes.inlineBtn}
+              color={worker ? 'secondary' : 'primary'}
+              disabled={!this.isValid()}
+              onClick={() => this.toggleRun()}>
+                {worker ? 'STOP' : 'RUN'}
+              </Button>
+          </div>
+        </Grid>
+        <Divider className={classes.sep}/>
+        <Typography gutterBottom className={oldOutput ? classes.faded : ''}>
+          {output}
+        </Typography>
       </Paper>
     </div>;
   }

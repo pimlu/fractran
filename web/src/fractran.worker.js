@@ -11,7 +11,6 @@ let instance = wasmModule.then(m =>
 onmessage = function(e) {
   let {data} = e;
   let {input, program, len} = data;
-  
   instance.then(i =>
     i.exports.hsRunDynamic(len, program, input)
   ).then(out => {
@@ -22,7 +21,7 @@ onmessage = function(e) {
   }).catch(err => {
     postMessage({
       good: false,
-      err: err.message || ''+err
+      err: 'FRACTRAN engine error, likely it detected an infinite loop in your FRACTRAN code.'
     });
   }).then(close);
 }
