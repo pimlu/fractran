@@ -30,7 +30,11 @@ class MenuButton extends React.Component {
 
     return (<div>
       <Tooltip title={tooltip} aria-label={tooltip} leaveDelay={500} arrow placement="left">
-        <Button aria-controls="long-menu" aria-haspopup="true" onClick={this.handleOpen}>
+        <Button
+          variant="contained"
+          size="small"
+          aria-controls="long-menu" aria-haspopup="true"
+          onClick={this.handleOpen}>
           {text}
         </Button>
       </Tooltip>
