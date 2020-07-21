@@ -1,7 +1,24 @@
 let u = s => s.replace(/, /g, '\n');
 
 let hamming = u('3*11 % 2^2*5, 5 % 11, 13 % 2*5, 1 % 5, 2 % 3, 2*5 % 7, 7 % 2');
-
+let fibIn = n => `[2, 1], [3, 1], [13, 1], [5, ${n}-1]`;
+let fibFr =
+`17 % 65
+133 % 34
+17 % 19
+23 % 17
+2233 % 69
+23 % 29
+31 % 23
+74 % 341
+31 % 37
+41 % 31
+129 % 287
+41 % 43
+13 % 41
+1 % 13
+1 % 3
+`;
 
 let examples = {
   'Hamming weight (small)': {
@@ -24,6 +41,14 @@ let examples = {
     input: '2',
     program: u('2 % 3, 3 % 2')
   },
+  'Calculate 7th fibonacci': {
+    input: fibIn(7),
+    program: fibFr
+  },
+  'Calculate 99th fibonacci': {
+    input: fibIn(99),
+    program: fibFr
+  }
 /* should be 3/2 run on input 2^1? doesn't work
   'Lomont\'s self-interpreter': {
     input: '[5, 1], [7, 2], [67, 4355]',
