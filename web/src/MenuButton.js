@@ -19,7 +19,7 @@ class MenuButton extends React.Component {
     this.setState({
       anchorEl: null,
     });
-    if(this.props.onSelect)
+    if(this.props.onSelect && option !== undefined)
       this.props.onSelect(option);
   }
   render = () => {
@@ -43,7 +43,7 @@ class MenuButton extends React.Component {
         keepMounted
         anchorEl={anchorEl}
         open={!!anchorEl}
-        onClose={this.handleClose}
+        onClose={e => this.handleClose()}
         PaperProps={{
           style: {
             maxHeight: ITEM_HEIGHT * 9.5,
