@@ -46,4 +46,7 @@ module.exports = {
       path: path.resolve(__dirname, 'dist'),
       globalObject: 'this'
   },
+  watchOptions: {
+    ignored: /node_modules/
+  }
 };
