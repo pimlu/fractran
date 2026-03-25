@@ -3,6 +3,8 @@
 *.o
 *.jsmod
 fractran
+fractran-bench
+*.prof
 .vscode/
 web/node_modules
 web/gen
