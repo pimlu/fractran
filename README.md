@@ -11,7 +11,33 @@ Here's the implementation with some demo (hard coded) FRACTRAN programs called i
 
 ## Building and running the code
 
-You need an installation of GHC. Then run `./build.sh` to compile, or run `./build.sh clean` to remove the build products.  Then to run the demo, run `./fractran`.
+You need an installation of GHC. Then run `./build.sh` to compile, or run `./build.sh clean` to remove the build products. The script now builds two binaries:
+
+- `./fractran` for the original demo flow
+- `./fractran-bench` for deterministic benchmark runs
+
+On systems where only dynamic Haskell package artifacts are installed, `./build.sh` uses `-dynamic` by default so the build succeeds without extra package surgery. To run the original demo, use `./fractran`.
+
+Example benchmark run:
+
+```sh
+./fractran-bench --program primegame --engine cycle --take 100
+```
+
+Available benchmark programs:
+
+- `primegame`
+- `paper`
+- `hamming`
+- `mult`
+
+Available benchmark engines:
+
+- `naive-fast`
+- `reg`
+- `frac-opt`
+- `cycle`
+- `compiled`
 
 To build for the browser, there are more steps. You need to install docker and run `./build.sh --browser` to first populate `web/gen`. Webpack depends on the JS output from Asterius which gets dumped to that directory. Then cd into `web` and run `yarn` which will install the NPM package dependencies.  You then should be able to run `yarn run serve`.
 

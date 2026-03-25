@@ -19,8 +19,14 @@ if [ "$1" = '--browser' ]; then
 else
   if [ "$1" = 'clean' ]; then
     rm -rf out;
+    rm -f fractran fractran-bench
     exit 0
   fi
   mkdir -p out
-  ghc --make -prof -fprof-auto src/main.hs -isrc -odir out -hidir out -o fractran
+  GHC_FLAGS="-dynamic"
+  if [ "$1" = '--profile' ]; then
+    GHC_FLAGS="-prof -fprof-auto"
+  fi
+  ghc --make $GHC_FLAGS src/main.hs -isrc -odir out -hidir out -o fractran
+  ghc --make $GHC_FLAGS src/bench_main.hs -isrc -odir out -hidir out -o fractran-bench
 fi
