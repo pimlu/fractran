@@ -16,3 +16,7 @@ rev = "v4.30.0-rc2"
 
 [[lean_lib]]
 name = "Fractran"
+
+[[lean_exe]]
+name = "fractran-demo"
+root = "Main"

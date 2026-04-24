@@ -2,7 +2,7 @@
 *.hi
 *.o
 *.jsmod
-fractran
+/fractran
 .vscode/
 web/node_modules
 web/gen
