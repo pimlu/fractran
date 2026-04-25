@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A high-performance FRACTRAN interpreter written in Haskell. FRACTRAN programs are ordered lists of fractions; evaluation repeatedly multiplies the current state by the first fraction whose product is an integer, halting when none qualify. This repo achieves 30x+ speedups over naive implementations via two algorithmic innovations: static fraction elimination and cycle detection with arithmetic "leaping."
 
-The whitepaper `termpd.tex` contains the formal proofs and benchmarks. `fractran-lean/` is a work-in-progress Lean formalization. `web/` is a browser build using Asterius (Haskell-to-WASM compiler).
+The whitepaper `termpd.tex` contains the formal proofs and benchmarks. `fractran-lean/` is a Lean 4 formalization (using mathlib). `web/` is a browser build using Asterius (Haskell-to-WASM compiler).
 
 ## Building and running
 
@@ -74,3 +74,37 @@ data CBuf a b = CBuf Int (Q.Seq a) (S.Set b) (a -> b)  -- capacity, sequence, se
 `primegame` (Conway's prime generator), `hamming` (Hamming weight), `paper` (addition preserving input), `mult` (multiplication), `fteval` (84-fraction self-interpreter), `nonterm` (nonterminating cycle for testing).
 
 The `cyclen` parameter to `cycles` is the circular buffer capacity — larger values detect longer cycles at higher memory cost. The paper uses 2 for PRIMEGAME and 16 for the self-interpreter.
+
+## Lean formalization (`fractran-lean/`)
+
+Lean 4 project using mathlib (v4.30.0-rc2). Build with `cd fractran-lean && lake build`.
+
+### Correctness framework
+
+A FRACTRAN program is `List (ℕ × ℕ)` (numerator, denominator pairs). The reference semantics are:
+
+- **`naiveStep`** (`Basic.lean`): scans for the first fraction `(p, q)` where `q ∣ n`, returning `n / q * p`. Returns `none` if no fraction applies (halt).
+- **`naiveRun`** (`Basic.lean`): iterates `naiveStep` for `k` steps. Returns `some m` if still running, `none` if halted.
+- **`WellFormed`** (`Basic.lean`): all numerators and denominators are positive.
+- **`Correct`** (`Basic.lean`): any interpreter `interp prog n k → (Option ℕ, ℕ)` is correct if it returns `(result, j)` with `j ≥ k` and `naiveRun prog n j = result`. This handles both halting and cycle-detection interpreters uniformly.
+
+### What's proven
+
+**Register interpreter** (`Register.lean`): `RegMap` is `Std.TreeMap ℕ ℕ` mapping primes to exponents. Key results:
+- `facmap`/`unfmap` round-trip: `unfmap (facmap n) = n` for `n > 0`
+- Homomorphisms: `unfmap (m₁ * m₂) = unfmap m₁ * unfmap m₂`, `unfmap (m / den) = unfmap m / unfmap den` (when applicable)
+- `applicable den m ↔ unfmap den ∣ unfmap m` for well-formed maps
+- **`regRun_correct`**: the register interpreter satisfies `Correct`
+
+The proof strategy bridges computation (`TreeMap`) and reasoning (`Finsupp`/`Nat.factorization`) via `toFinsupp`.
+
+### Future work — two optimizations to formalize
+
+The goal is to formalize the two algorithmic innovations from the Haskell implementation and prove them `Correct` against `naiveRun`.
+
+**1. Static fraction elimination** (Haskell: `optArr`, `fracOpt` in `Fractran.hs`): After fraction `j` fires, precompute which earlier fractions `k < j` can possibly fire next. Fraction `k` is skipped if its denominator shares no prime with `j`'s numerator (if `j` fired, it added those primes, so `k`'s denominator test could not have newly become satisfiable). This is a per-step optimization that reduces the fraction scan from O(l) toward O(1).
+
+**2. Cycle detection with arithmetic leaping** (Haskell: `cycles`, `leap`, `stateSplit` in `Fractran.hs`): Partition registers into *logic* (small exponents that affect control flow) and *data* (large exponents that cannot). When the logic state repeats, compute how many full cycles can be safely skipped before any data register drops into logic territory, then advance the state arithmetically. This is the main speedup (30x+ on benchmarks). Key components:
+- `stateSplit`: partition state by threshold `dthresh = cyclen * max_denominator` per prime
+- `CBuf`: circular buffer with set-backed membership for detecting logic-state repeats
+- `leap`: given a repeated logic state, compute the number of safe cycle repetitions and the resulting state

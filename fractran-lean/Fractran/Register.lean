@@ -115,7 +115,7 @@ private lemma unfmap_eq_toList_prod (m : RegMap) :
     unfmap m = (m.toList.map (fun (p, e) => p ^ e)).prod := by
   simp only [unfmap, Std.TreeMap.foldl_eq_foldl_toList, foldl_mul_map_prod, one_mul]
 
-private lemma getD_of_mem_toList (m : RegMap) {p e : ℕ} (h : (p, e) ∈ m.toList) :
+lemma getD_of_mem_toList (m : RegMap) {p e : ℕ} (h : (p, e) ∈ m.toList) :
     m.getD p 0 = e := by
   have hmem := Std.TreeMap.mem_toList_iff_getElem?_eq_some.mp h
   rw [Std.TreeMap.getD_eq_getD_getElem?, hmem]; rfl
@@ -243,7 +243,7 @@ lemma unfmap_facmap_eq_factorization_prod (n : ℕ) :
 lemma facmap_unfmap (n : ℕ) (hn : 0 < n) : unfmap (facmap n) = n := by
   rw [unfmap_facmap_eq_factorization_prod, Nat.prod_factorization_pow_eq_self hn.ne']
 
-private lemma applicable_eq_toList_all (den m : RegMap) :
+lemma applicable_eq_toList_all (den m : RegMap) :
     applicable den m = den.toList.all (fun (p, e) => decide (m.getD p 0 ≥ e)) := by
   simp only [applicable, get, Std.TreeMap.all, Std.DTreeMap.all,
              Std.DTreeMap.Internal.Impl.all_eq_all_toListModel,
@@ -436,7 +436,7 @@ private lemma foldl_div_getD (l : List (ℕ × ℕ)) (m : RegMap) (p : ℕ) :
         simp only [compare_eq_iff_eq, show ¬(hd.1 = p) from hkp, ite_false]
 
 -- (m / den).getD p 0 = m.getD p 0 - den.getD p 0
-private lemma div_getD (m den : RegMap) (p : ℕ) :
+lemma div_getD (m den : RegMap) (p : ℕ) :
     (m / den).getD p 0 = m.getD p 0 - den.getD p 0 := by
   change (den.foldl (fun acc k e =>
     let v := acc.getD k 0 - e; if v = 0 then acc.erase k else acc.insert k v) m).getD p 0 =
