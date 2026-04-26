@@ -110,65 +110,12 @@ theorem detectInfiniteLoop_sound
     · -- st.halted = true
       simp [hh] at hloop
   clear hloop  -- already extracted what we need
-  -- Step 2: Extract m_start from buffer (mirror leap_correct prelude).
-  set L := range.length with hL_def
-  have hLpos : 0 < L :=
-    CBuf.getRange_length_pos st.buf Prod.snd (stateSplit thresh st.m).snd range hgr
-  obtain ⟨_hbuf_len, hentries⟩ := hbuf
-  have hgr' := hgr
-  simp only [CBuf.getRange, Option.map_eq_some_iff] at hgr'
-  obtain ⟨idx, hfind, hrange_eq⟩ := hgr'
-  have hidx := (List.findIdx?_eq_some_iff_getElem.mp hfind).1
-  have hL_eq : L = idx + 1 := by
-    change range.length = idx + 1
-    rw [← hrange_eq, List.length_take]; omega
-  obtain ⟨m_start, hstart_split, hstart_run, hstart_wf⟩ := hentries idx hidx
-  have hstep_eq : st.stepsSimulated - 1 - idx = st.stepsSimulated - L := by omega
-  rw [hstep_eq] at hstart_run
-  have hrange_len_le : range.length ≤ st.buf.toList.length := by
-    rw [← hrange_eq, List.length_take]; exact Nat.min_le_right _ _
-  have hL_le_steps : L ≤ st.stepsSimulated := by
-    show range.length ≤ st.stepsSimulated; omega
-  have hL_cap : L ≤ st.buf.cap := by
-    have h2 : st.buf.toList.length ≤ st.buf.cap := by
-      rw [CBuf.toList_length]; exact st.buf.hBufSize
-    show range.length ≤ st.buf.cap; omega
-  -- Step 2 (cont): logic state match → CycleInvariant.
-  have hfind_pred := (List.findIdx?_eq_some_iff_getElem.mp hfind).2.1
-  rw [hstart_split] at hfind_pred
-  have hlogic_toList : (stateSplit thresh m_start).snd.toList =
-      (stateSplit thresh st.m).snd.toList := by
-    change ((stateSplit thresh m_start).snd.toList ==
-           (stateSplit thresh st.m).snd.toList) = true at hfind_pred
-    exact beq_iff_eq.mp hfind_pred
-  have hlogic_match : ∀ p, (stateSplit thresh m_start).snd.getD p 0 =
-      (stateSplit thresh st.m).snd.getD p 0 :=
-    fun p => getD_eq_of_toList_eq _ _ hlogic_toList p 0
-  have hthresh_eq : ∀ p, thresh.getD p 0 =
-      st.buf.cap * maxDenom prog.toRegProg p := by
-    intro p; rw [hthresh]; exact dthreshMap_spec prog.toRegProg st.buf.cap p
-  have hcycle_inv : CycleInvariant prog.toRegProg st.buf.cap m_start st.m :=
-    stateSplit_implies_cycleInvariant prog.toRegProg st.buf.cap thresh
-      m_start st.m hthresh_eq hlogic_match
-  -- Step 2 (cont): naiveRun and regRun versions of "one cycle from m_start".
-  have hone_cycle : naiveRun prog (RegMap.unfmap m_start) L =
-      some (RegMap.unfmap st.m) := by
-    have h := naiveRun_add prog n (st.stepsSimulated - L) L
-    rw [show st.stepsSimulated - L + L = st.stepsSimulated from by omega] at h
-    rw [h, hstart_run] at hinv
-    simpa [Option.bind] using hinv
-  obtain ⟨st_m_alt, hreg_one, hwf_st_m_alt, hgetD_alt⟩ :
-      ∃ m', regRun prog.toRegProg m_start L = some m' ∧ m'.WF ∧
-            ∀ p, m'.getD p 0 = st.m.getD p 0 := by
-    have h := regRun_map_unfmap prog m_start hstart_wf L hw
-    rw [hone_cycle] at h
-    cases hr : regRun prog.toRegProg m_start L with
-    | none => rw [hr] at h; simp only [Option.map_none, reduceCtorEq] at h
-    | some m' =>
-      rw [hr] at h
-      simp only [Option.map_some, Option.some.injEq] at h
-      have hwf_m' := regRun_wf prog m_start hstart_wf hw L m' hr
-      exact ⟨m', rfl, hwf_m', RegMap.getD_eq_of_unfmap_eq m' st.m hwf_m' hwf h⟩
+  -- Step 2: Extract m_start from buffer (bundled).
+  obtain ⟨m_start, st_m_alt, hLpos, hL_le_steps, hL_cap, hstart_wf,
+          hstart_run, _hone_cycle, hreg_one, hwf_st_m_alt, hgetD_alt,
+          hcycle_inv, hlogic_match, hrange_getLast!⟩ :=
+    cycle_match_extracts_m_start prog n hw _hn thresh st hthresh hinv hwf hbuf range hgr
+  set L := range.length
   -- Transfer CycleInvariant to st_m_alt (same getD per prime).
   have hcycle_inv_alt : CycleInvariant prog.toRegProg st.buf.cap m_start st_m_alt := by
     intro p
@@ -176,16 +123,6 @@ theorem detectInfiniteLoop_sound
     rcases hcycle_inv p with heq | ⟨h₁, h₂⟩
     · left; rw [hg]; exact heq
     · right; refine ⟨h₁, ?_⟩; rw [hg]; exact h₂
-  -- range.getLast! = stateSplit thresh m_start (the matching buffer entry).
-  have hrange_getLast! : range.getLast! = stateSplit thresh m_start := by
-    conv_lhs =>
-      rw [show range = st.buf.toList.take (idx + 1) from hrange_eq.symm]
-    simp only [List.getLast!_eq_getLast?_getD]
-    rw [List.getLast?_take]
-    rw [if_neg (by omega)]
-    rw [show idx + 1 - 1 = idx from by omega,
-        List.getElem?_eq_getElem hidx, Option.some_or, Option.getD_some]
-    exact hstart_split
   -- Step 3: Absolute delta is non-negative for every prime (combining
   --         leapCount_none_implies_data_le, stateSplit_recover, and the
   --         buffer's logic-state match).
