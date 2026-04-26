@@ -397,8 +397,8 @@ private theorem foldl_insert_getD_of_mem (l : List (ℕ × ℕ)) (p v : ℕ) (ac
   have hp2 : p ∉ l₂.map Prod.fst := (List.nodup_cons.mp hnd_r).1
   rw [hlist, List.foldl_append, List.foldl_cons]
   rw [foldl_insert_getD_of_not_mem l₂ p _ hp2]
-  rw [Std.TreeMap.getD_insert]
-  simp [show compare p p = .eq from compare_eq_iff_eq.mpr rfl]
+  rw [Std.TreeMap.getD_insert, show compare p p = .eq from compare_eq_iff_eq.mpr rfl]
+  rfl
 
 /-- The "copy" foldl on TreeMap (insert each entry into ∅) preserves getD. -/
 private theorem foldl_insert_copy_getD (m : RegMap) (p : ℕ) :
@@ -513,7 +513,9 @@ theorem leapCount_pos_imp (thresh : RegMap) (history : List RegMap)
     unfold life
     simp only [hsd_eq, hed_eq]
   -- Bring leapCount into the form (match (filterMap ...) with [] => none | l => some _) = some c
-  change (match (((startData.foldl (fun acc q _ => acc.insert q 0) endData).toList.map Prod.fst).filterMap
+  set keys := ((startData.foldl (fun acc q _ => acc.insert q 0) endData).toList.map Prod.fst)
+    with hkeys_def
+  change (match (keys.filterMap
             (fun q => life thresh history
               (startData.foldl (fun acc k v => acc.insert k v) (∅ : RegMap))
               (endData.foldl (fun acc k v => acc.insert k v) (∅ : RegMap)) q)) with
@@ -546,7 +548,7 @@ theorem leapCount_pos_imp (thresh : RegMap) (history : List RegMap)
     · -- s ≠ e → minVal ≥ thresh
       intro hne
       by_contra hlt
-      push_neg at hlt
+      push Not at hlt
       have hmargin_neg : margin thresh history p < 0 := by
         unfold margin
         push_cast
@@ -1506,7 +1508,9 @@ private theorem mem_list_foldl_insert (l : List (ℕ × ℕ)) (acc : RegMap) (p 
     (h : p ∈ acc ∨ p ∈ l.map Prod.fst) :
     p ∈ l.foldl (fun a (x : ℕ × ℕ) => a.insert x.1 0) acc := by
   induction l generalizing acc with
-  | nil => simp at h; exact h
+  | nil =>
+    simp only [List.map_nil, List.not_mem_nil, or_false] at h
+    exact h
   | cons hd tl ih =>
     simp only [List.foldl_cons, List.map_cons, List.mem_cons] at h ⊢
     rcases h with h | (rfl | h)
@@ -1604,7 +1608,7 @@ theorem dthreshMap_spec (prog : List (RegMap × RegMap)) (cycleLen : ℕ) (p : �
     by_cases hv : cycleLen * maxDenom prog p = 0
     · simp only [hv, ↓reduceIte]
       rw [foldl_cond_insert_getD_gen l₁ (fun q _ => cycleLen * maxDenom prog q) p ∅ hnd1 hp1]
-      simp [Std.TreeMap.getD_emptyc, hv]
+      simp [Std.TreeMap.getD_emptyc]
     · simp only [hv, ↓reduceIte]
       rw [Std.TreeMap.getD_insert, show compare p p = .eq from compare_eq_iff_eq.mpr rfl]
       simp
@@ -1645,7 +1649,7 @@ theorem getD_eq_of_toList_eq (m₁ m₂ : RegMap)
 /-- The `allCandidates` list satisfies the membership and nodup conditions. -/
 private theorem allCandidates_mem_prog (prog : List (RegMap × RegMap)) :
     ∀ c ∈ allCandidates prog, c.1 ∈ prog :=
-  fun c hc => List.fst_mem_of_mem_zipIdx hc
+  fun _ hc => List.fst_mem_of_mem_zipIdx hc
 
 private theorem allCandidates_nodup_snd (prog : List (RegMap × RegMap)) :
     ((allCandidates prog).map (·.2)).Nodup := by
@@ -1738,7 +1742,6 @@ private theorem elimRunAux_succeeds_of_cycleInvariant
         | none => simp [hstep₂] at this
         | some result₂ =>
           obtain ⟨idx₂, stepped₂⟩ := result₂
-          simp only [hstep₂]
           exact ⟨stepped₂, _, rfl⟩
 
 /-! ## Per-register cycle analysis (paper's approach to Theorem 2)
@@ -1937,7 +1940,7 @@ theorem iterated_cycle_per_reg
         by_cases hdelta : (m₁.getD p 0 : ℤ) - (m₀.getD p 0 : ℤ) ≥ 0
         · have h3 : (c : ℤ) * ((m₁.getD p 0 : ℤ) - (m₀.getD p 0 : ℤ)) ≥ 0 := by positivity
           linarith
-        · push_neg at hdelta
+        · push Not at hdelta
           have h3 : (c : ℤ) * ((m₁.getD p 0 : ℤ) - (m₀.getD p 0 : ℤ)) ≥
                     ((c + 1 : ℕ) : ℤ) * ((m₁.getD p 0 : ℤ) - (m₀.getD p 0 : ℤ)) := by
             push_cast
@@ -2091,7 +2094,7 @@ theorem leapState_spec (startData endData logic : RegMap) (c : ℕ) (p : ℕ) :
         simp only [merged, Std.TreeMap.foldl_eq_foldl_toList]
         exact mem_list_foldl_insert _ _ _ (Or.inr (by
           rw [Std.TreeMap.map_fst_toList_eq_keys]; exact Std.TreeMap.mem_keys.mpr h))))
-    simp only [gval, hp_ed, hp_sd]; rfl
+    simp only [hp_ed, hp_sd]; rfl
 
 /-- Helper: foldl that conditionally inserts keys from a list preserves WF,
     provided the list only contains prime keys and the accumulator is WF. -/
@@ -2122,10 +2125,11 @@ theorem stateSplit_wf_fst (thresh m : RegMap) (hwf : RegMap.WF m) :
     RegMap.WF (stateSplit thresh m).fst := by
   unfold stateSplit; dsimp only
   rw [Std.TreeMap.foldl_eq_foldl_toList]
-  refine foldl_cond_insert_wf _ _ (fun _ hp => absurd hp Std.TreeMap.not_mem_emptyc) ?_ (fun acc p e =>
-    let t := thresh.getD p 0
-    let dataVal := if t = 0 then e else e - min e t
-    if dataVal = 0 then acc else acc.insert p dataVal) ?_
+  refine foldl_cond_insert_wf _ _ (fun _ hp => absurd hp Std.TreeMap.not_mem_emptyc) ?_
+    (fun acc p e =>
+      let t := thresh.getD p 0
+      let dataVal := if t = 0 then e else e - min e t
+      if dataVal = 0 then acc else acc.insert p dataVal) ?_
   · intro ⟨p, _⟩ hp
     exact hwf p (Std.TreeMap.mem_iff_isSome_getElem?.mpr (by
       rw [Std.TreeMap.mem_toList_iff_getElem?_eq_some.mp hp]; rfl))
@@ -2138,12 +2142,13 @@ theorem stateSplit_wf_snd (thresh m : RegMap) (hwf : RegMap.WF m) :
     RegMap.WF (stateSplit thresh m).snd := by
   unfold stateSplit; dsimp only
   rw [Std.TreeMap.foldl_eq_foldl_toList]
-  refine foldl_cond_insert_wf _ _ (fun _ hp => absurd hp Std.TreeMap.not_mem_emptyc) ?_ (fun acc p e =>
-    let t := thresh.getD p 0
-    if t = 0 then acc
-    else
-      let logicVal := min e t
-      if logicVal = 0 then acc else acc.insert p logicVal) ?_
+  refine foldl_cond_insert_wf _ _ (fun _ hp => absurd hp Std.TreeMap.not_mem_emptyc) ?_
+    (fun acc p e =>
+      let t := thresh.getD p 0
+      if t = 0 then acc
+      else
+        let logicVal := min e t
+        if logicVal = 0 then acc else acc.insert p logicVal) ?_
   · intro ⟨p, _⟩ hp
     exact hwf p (Std.TreeMap.mem_iff_isSome_getElem?.mpr (by
       rw [Std.TreeMap.mem_toList_iff_getElem?_eq_some.mp hp]; rfl))
@@ -2197,7 +2202,7 @@ private theorem toList_map_fst_prime (m : RegMap) (hwf : m.WF) :
 /-- Helper: `m₁ * m₂` is WF when both inputs are WF. -/
 private theorem mul_wf (m₁ m₂ : RegMap) (hwf₁ : m₁.WF) (hwf₂ : m₂.WF) :
     (m₁ * m₂).WF := by
-  show (m₁.foldl (fun acc p e => acc.insert p (acc.get p + e)) m₂).WF
+  change (m₁.foldl (fun acc p e => acc.insert p (acc.get p + e)) m₂).WF
   rw [Std.TreeMap.foldl_eq_foldl_toList]
   have hl : ∀ pe ∈ m₁.toList, pe.1.Prime :=
     fun pe hp => hwf₁ pe.1 (Std.TreeMap.mem_iff_isSome_getElem?.mpr (by
@@ -2244,7 +2249,7 @@ private theorem unfmap_eq_of_forall_getD (m₁ m₂ : RegMap)
     5. Show the final state's unfmap equals `leapState`'s unfmap -/
 theorem leap_correct
     (prog : FractranProg) (n : ℕ)
-    (hw : prog.WellFormed) (hn : 0 < n)
+    (hw : prog.WellFormed) (_hn : 0 < n)
     (thresh dmaxes : RegMap) (st : CycleState)
     (hthresh : thresh = dthreshMap prog.toRegProg (st.buf.cap))
     (hdmaxes : dmaxes = dmaxesMap prog.toRegProg)
@@ -2271,7 +2276,7 @@ theorem leap_correct
   obtain ⟨idx, hfind, hrange_eq⟩ := hgr'
   have hidx := (List.findIdx?_eq_some_iff_getElem.mp hfind).1
   have hL_eq : L = idx + 1 := by
-    show range.length = idx + 1
+    change range.length = idx + 1
     rw [← hrange_eq, List.length_take]; omega
   -- Extract m_start
   obtain ⟨m_start, hstart_split, hstart_run, hstart_wf⟩ := hentries idx hidx
@@ -2314,9 +2319,13 @@ theorem leap_correct
       naiveRun prog (RegMap.unfmap st.m) (L * c) := by
     have h1 := naiveRun_add prog n (st.stepsSimulated - L) (L + L * c)
     rw [show st.stepsSimulated - L + (L + L * c) = st.stepsSimulated + L * c from by omega] at h1
-    rw [h1, hstart_run]; simp [Option.bind]
+    rw [h1, hstart_run]
+    change naiveRun prog (RegMap.unfmap m_start) (L + L * c) = _
     have h2 := naiveRun_add prog (RegMap.unfmap m_start) L (L * c)
-    rw [hone_cycle] at h2; simp [Option.bind] at h2; exact h2
+    rw [hone_cycle] at h2
+    change naiveRun prog (RegMap.unfmap m_start) (L + L * c) =
+      naiveRun prog (RegMap.unfmap st.m) (L * c) at h2
+    exact h2
   rw [hgoal_eq]
   -- Step 5: Apply iterated_cycle_per_reg using leapCount-derived per-register safety
   -- First convert hone_cycle (naiveRun) to regRun.
@@ -2328,9 +2337,10 @@ theorem leap_correct
     have h := regRun_map_unfmap prog m_start hstart_wf L hw
     rw [hone_cycle] at h
     cases hr : regRun prog.toRegProg m_start L with
-    | none => rw [hr] at h; simp at h
+    | none => rw [hr] at h; simp only [Option.map_none, reduceCtorEq] at h
     | some m' =>
-      rw [hr] at h; simp at h
+      rw [hr] at h
+      simp only [Option.map_some, Option.some.injEq] at h
       have hwf_m' := regRun_wf prog m_start hstart_wf hw L m' hr
       exact ⟨m', rfl, hwf_m', RegMap.getD_eq_of_unfmap_eq m' st.m hwf_m' hwf h⟩
   -- Identify range.getLast! as the matching buffer entry (= stateSplit thresh m_start).
@@ -2377,7 +2387,7 @@ theorem leap_correct
         omega
       refine ⟨?_, ?_⟩
       · intro _; rw [hdelta_zero]; ring
-      · intro hp; rw [hdelta_zero]; push_cast; linarith
+      · intro hp; rw [hdelta_zero]; linarith
     · -- delta ≠ 0: use CycleInvariant branch (b)
       have hbr : m_start.getD p 0 ≥ st.buf.cap * maxDenom prog.toRegProg p ∧
                  st.m.getD p 0 ≥ st.buf.cap * maxDenom prog.toRegProg p := by
@@ -2417,7 +2427,7 @@ theorem leap_correct
           by_contra hp_not
           rw [Std.TreeMap.getD_eq_fallback hp_not] at hs_pos
           omega
-        · push_neg at hs_pos
+        · push Not at hs_pos
           have hs_zero : (stateSplit thresh m_start).fst.getD p 0 = 0 := Nat.le_zero.mp hs_pos
           have he_pos : (stateSplit thresh st.m).fst.getD p 0 > 0 := by
             have := hd_data_ne; omega
@@ -2454,7 +2464,8 @@ theorem leap_correct
         have h := hlc_p.1 hd_data_ne
         rw [hdmaxes_p] at h
         exact h
-      have hbound_gt : s_data > e_data → c * (s_data - e_data) ≤ minVal - maxDenom prog.toRegProg p := by
+      have hbound_gt : s_data > e_data →
+          c * (s_data - e_data) ≤ minVal - maxDenom prog.toRegProg p := by
         intro hgt
         have h := hlc_p.2 hgt
         rw [hdmaxes_p] at h
@@ -2480,17 +2491,18 @@ theorem leap_correct
         have hsteps_eq : st.stepsSimulated - 1 - j = st.stepsSimulated - L + i := by omega
         rw [hsteps_eq] at hbuf_run
         -- Trajectory: naiveRun n (stepsSimulated - L + i) = naiveRun (unfmap m_start) i
-        have hnr_split := naiveRun_add prog n (st.stepsSimulated - L) i
-        rw [hstart_run] at hnr_split
-        simp [Option.bind] at hnr_split
+        have hnr_split : naiveRun prog n (st.stepsSimulated - L + i) =
+            naiveRun prog (RegMap.unfmap m_start) i := by
+          rw [naiveRun_add, hstart_run]; rfl
         -- regRun → naiveRun via regRun_map_unfmap
-        have hreg_to_naive := regRun_map_unfmap prog m_start hstart_wf i hw
-        rw [hrun_mi] at hreg_to_naive
-        simp at hreg_to_naive
-        -- Combine: naiveRun n (stepsSimulated - L + i) = some (unfmap m_i) AND some (unfmap m_buf_j)
+        have hreg_to_naive : naiveRun prog (RegMap.unfmap m_start) i =
+            some (RegMap.unfmap m_i) := by
+          have h := regRun_map_unfmap prog m_start hstart_wf i hw
+          rw [hrun_mi] at h; exact h.symm
+        -- Combine via transitivity through naiveRun n (stepsSimulated - L + i)
         have heq_unfmap : RegMap.unfmap m_i = RegMap.unfmap m_buf_j := by
           have htrans : some (RegMap.unfmap m_i) = some (RegMap.unfmap m_buf_j) := by
-            rw [hreg_to_naive, ← hnr_split]; exact hbuf_run
+            rw [← hreg_to_naive, ← hnr_split]; exact hbuf_run
           exact Option.some.inj htrans
         have hgetD_eq : m_i.getD p 0 = m_buf_j.getD p 0 :=
           RegMap.getD_eq_of_unfmap_eq m_i m_buf_j hwf_mi hbuf_wf heq_unfmap p
@@ -2534,7 +2546,7 @@ theorem leap_correct
           -- When maxDenom_p > 0: m_start_p ≥ maxDenom_p, contradicts hp.
           have h1 := hbr.1
           have hmd_pos : 0 < maxDenom prog.toRegProg p := by
-            by_contra h; push_neg at h
+            by_contra h; push Not at h
             have : maxDenom prog.toRegProg p = 0 := Nat.le_zero.mp h
             omega
           have : m_start.getD p 0 ≥ maxDenom prog.toRegProg p := by
@@ -2558,11 +2570,11 @@ theorem leap_correct
         by_cases hdelta_sign : e_data ≥ s_data
         · -- delta ≥ 0: m_i + c*delta ≥ m_i ≥ maxDenom_p
           have hdelta_nn : (0 : ℤ) ≤ (e_data : ℤ) - (s_data : ℤ) := by
-            push_cast; omega
+            omega
           have : (c : ℤ) * ((e_data : ℤ) - (s_data : ℤ)) ≥ 0 := by positivity
-          push_cast; linarith
+          linarith
         · -- delta < 0: harder case
-          push_neg at hdelta_sign
+          push Not at hdelta_sign
           have hsd_gt : s_data > e_data := hdelta_sign
           have hcb := hbound_gt hsd_gt
           -- hcb : c * (s_data - e_data) ≤ minVal - maxDenom_p (in ℕ)
@@ -2595,7 +2607,7 @@ theorem leap_correct
               have hmul : (c : ℤ) * ((e_data : ℤ) - (s_data : ℤ)) =
                           - ((c : ℤ) * ((s_data : ℤ) - (e_data : ℤ))) := by ring
               rw [hmul]
-              have hsub_pos_int : (s_data : ℤ) - (e_data : ℤ) > 0 := by push_cast; omega
+              have hsub_pos_int : (s_data : ℤ) - (e_data : ℤ) > 0 := by omega
               linarith [hmin_le_e]
             exact this
           · -- i ≥ 1: m_i_p ≥ minVal
@@ -2610,22 +2622,24 @@ theorem leap_correct
               obtain ⟨m_buf_j, hbuf_split', hbuf_run', hbuf_wf'⟩ := hentries j hj_lt_buf'
               have hsteps_eq' : st.stepsSimulated - 1 - j = st.stepsSimulated - L + i := by omega
               rw [hsteps_eq'] at hbuf_run'
-              have hnr_split' := naiveRun_add prog n (st.stepsSimulated - L) i
-              rw [hstart_run] at hnr_split'
-              simp [Option.bind] at hnr_split'
-              have hreg_to_naive' := regRun_map_unfmap prog m_start hstart_wf i hw
-              rw [hrun_mi] at hreg_to_naive'
-              simp at hreg_to_naive'
+              have hnr_split' : naiveRun prog n (st.stepsSimulated - L + i) =
+                  naiveRun prog (RegMap.unfmap m_start) i := by
+                rw [naiveRun_add, hstart_run]; rfl
+              have hreg_to_naive' : naiveRun prog (RegMap.unfmap m_start) i =
+                  some (RegMap.unfmap m_i) := by
+                have h := regRun_map_unfmap prog m_start hstart_wf i hw
+                rw [hrun_mi] at h; exact h.symm
               have heq_unfmap' : RegMap.unfmap m_i = RegMap.unfmap m_buf_j := by
                 have htrans : some (RegMap.unfmap m_i) = some (RegMap.unfmap m_buf_j) := by
-                  rw [hreg_to_naive', ← hnr_split']; exact hbuf_run'
+                  rw [← hreg_to_naive', ← hnr_split']; exact hbuf_run'
                 exact Option.some.inj htrans
               have hgetD_eq' : m_i.getD p 0 = m_buf_j.getD p 0 :=
                 RegMap.getD_eq_of_unfmap_eq m_i m_buf_j hwf_mi hbuf_wf' heq_unfmap' p
               have hdata_le' : (stateSplit thresh m_buf_j).fst.getD p 0 ≤ m_buf_j.getD p 0 := by
                 rw [stateSplit_data_getD]
                 split_ifs <;> omega
-              have hbuf_in_range' : (stateSplit thresh m_buf_j).fst ∈ range.dropLast.map Prod.fst := by
+              have hbuf_in_range' :
+                  (stateSplit thresh m_buf_j).fst ∈ range.dropLast.map Prod.fst := by
                 rw [hdropLast]
                 apply List.mem_map.mpr
                 refine ⟨st.buf.toList[j], ?_, ?_⟩
@@ -2642,7 +2656,6 @@ theorem leap_correct
             -- Now: m_i_p + c*(e_data - s_data) ≥ minVal - (minVal - maxDenom_p) = maxDenom_p
             have hmul : (c : ℤ) * ((e_data : ℤ) - (s_data : ℤ)) =
                         - ((c : ℤ) * ((s_data : ℤ) - (e_data : ℤ))) := by ring
-            push_cast
             rw [hmul]
             have : (m_i.getD p 0 : ℤ) ≥ (minVal : ℤ) := by exact_mod_cast hmi_ge_min
             linarith
@@ -2657,7 +2670,9 @@ theorem leap_correct
   have hrun_from_stm : naiveRun prog (RegMap.unfmap st.m) (L * c) =
       some (RegMap.unfmap m_final) := by
     have h := naiveRun_add prog (RegMap.unfmap m_start) L (L * c)
-    rw [hone_cycle] at h; simp [Option.bind] at h
+    rw [hone_cycle] at h
+    change naiveRun prog (RegMap.unfmap m_start) (L + L * c) =
+      naiveRun prog (RegMap.unfmap st.m) (L * c) at h
     rw [show L + L * c = L * (c + 1) from by ring] at h
     rw [← h]; exact hnaive_final
   rw [hrun_from_stm]; congr 1
@@ -2720,7 +2735,7 @@ theorem leap_correct
         push_cast [Nat.cast_sub hed] at hfinal ⊢; linarith
       exact Int.ofNat_inj.mp hlhs.symm
     · -- Decreasing case: leapState gives ed - c*(sd - ed) + lg
-      push_neg at hed
+      push Not at hed
       simp only [show ¬((stateSplit thresh m_start).fst.getD p 0 ≤ endData.getD p 0)
         from by omega, ↓reduceIte]
       have hno_underflow : c * ((stateSplit thresh m_start).fst.getD p 0 -
@@ -2768,7 +2783,7 @@ theorem leap_correct
         -- hbound : c * (sd - ed) ≤ minVal - dmaxes.getD p 0
         -- minVal ≤ ed, so minVal - dmaxes ≤ ed
         -- endData = (stateSplit thresh st.m).fst by `set`
-        show c * ((stateSplit thresh m_start).fst.getD p 0 -
+        change c * ((stateSplit thresh m_start).fst.getD p 0 -
             (stateSplit thresh st.m).fst.getD p 0) ≤ (stateSplit thresh st.m).fst.getD p 0
         omega
       have hed_le_sd : endData.getD p 0 ≤ (stateSplit thresh m_start).fst.getD p 0 := by omega
@@ -2900,12 +2915,12 @@ theorem cycleStep_progress
     (thresh dmaxes : RegMap) (st : CycleState) :
     let st' := cycleStep table fallback thresh dmaxes st
     st'.halted ∨ st'.stepsSimulated ≥ st.stepsSimulated + 1 := by
-  show (cycleStep table fallback thresh dmaxes st).halted ∨
+  change (cycleStep table fallback thresh dmaxes st).halted ∨
        (cycleStep table fallback thresh dmaxes st).stepsSimulated ≥ st.stepsSimulated + 1
   unfold cycleStep
   cases hh : st.halted
   · -- st.halted = false
-    simp only [if_false]
+    simp only [Bool.false_eq_true, ↓reduceIte]
     match hgr : st.buf.getRange Prod.snd (stateSplit thresh st.m).snd with
     | none =>
       match hes : elimStep st.cands st.m with
@@ -2939,7 +2954,7 @@ theorem cycleStep_progress
     (thresh dmaxes : RegMap) (st : CycleState) :
     (cycleStep table fallback thresh dmaxes st).buf.cap = st.buf.cap := by
   unfold cycleStep
-  cases st.halted <;> simp only [Bool.false_eq_true, ↓reduceIte] <;> try rfl
+  cases st.halted <;> (simp only [Bool.false_eq_true, ↓reduceIte]; try rfl)
   match st.buf.getRange Prod.snd (stateSplit thresh st.m).snd with
   | none =>
     dsimp only
@@ -3082,7 +3097,7 @@ theorem cycleStep_correct
       have ⟨hstep, hwf'⟩ := helim_bridge i m' hes
       refine ⟨?_, by intro h; simp at h, hwf', ?_, ?_⟩
       · -- naiveRun
-        show naiveRun prog n st.stepsSimulated >>= naiveStep prog = some (RegMap.unfmap m')
+        change naiveRun prog n st.stepsSimulated >>= naiveStep prog = some (RegMap.unfmap m')
         rw [hinv]; exact hstep
       · -- ElimInvariant
         subst htable; subst hfallback
@@ -3108,7 +3123,7 @@ theorem cycleStep_correct
       intro i m' hes
       have ⟨hstep, hwf'⟩ := helim_bridge i m' hes
       refine ⟨?_, by intro h; simp at h, hwf', ?_, ?_⟩
-      · show naiveRun prog n st.stepsSimulated >>= naiveStep prog = some (RegMap.unfmap m')
+      · change naiveRun prog n st.stepsSimulated >>= naiveStep prog = some (RegMap.unfmap m')
         rw [hinv]; exact hstep
       · subst htable; subst hfallback
         by_cases hi : i < (optTable prog.toRegProg).size
@@ -3215,8 +3230,8 @@ theorem cycleRunAux_correct
   | zero =>
     simp only [cycleRunAux]
     cases hh : st.halted
-    · simp [hh]; exact hinit
-    · simp [hh]; exact ⟨hinit, hhalted hh⟩
+    · exact hinit
+    · exact ⟨hinit, hhalted hh⟩
   | succ fuel ih =>
     simp only [cycleRunAux]
     have hstep := cycleStep_correct prog n hw hn table fallback thresh dmaxes st
@@ -3272,11 +3287,13 @@ theorem cycleRun_correct (cyclen : ℕ) (hcyclen : 0 < cyclen) :
   -- Case split on halted
   cases hh : result.halted
   · -- Not halted (result.halted = false)
-    simp [hh] at hcorr hge
-    rw [hdef]; simp [hh]
+    simp only [hh, Bool.false_eq_true, ↓reduceIte] at hcorr
+    simp only [hh, Bool.false_eq_true, false_or] at hge
+    rw [hdef]
+    simp only [hh, Bool.false_eq_true, ↓reduceIte]
     refine ⟨by omega, hcorr⟩
   · -- Halted (result.halted = true): produce HaltsIn at result.stepsSimulated
-    simp [hh] at hcorr
+    simp only [hh, ↓reduceIte] at hcorr
     obtain ⟨hrun, hstep⟩ := hcorr
     rw [hdef]; simp only [hh, ite_true]
     exact ⟨result.m.unfmap, hrun, hstep⟩

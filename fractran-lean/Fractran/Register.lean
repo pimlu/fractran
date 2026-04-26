@@ -644,10 +644,10 @@ lemma regRun_step_succ (prog : List (RegMap × RegMap)) (m m' : RegMap) (k : ℕ
     regRun prog m (k + 1) = regRun prog m' k := by
   induction k with
   | zero =>
-    show regRun prog m 0 >>= regStep prog = some m'
+    change regRun prog m 0 >>= regStep prog = some m'
     simp [regRun, h]
   | succ k ih =>
-    show regRun prog m (k + 1) >>= regStep prog = regRun prog m' k >>= regStep prog
+    change regRun prog m (k + 1) >>= regStep prog = regRun prog m' k >>= regStep prog
     rw [ih]
 
 /-- Specification of `regRunExact`. Either it ran the full `k` steps without
@@ -702,7 +702,6 @@ theorem regRun_correct : Correct regRunNat := by
   obtain ⟨hsome, hnone⟩ := hspec
   cases hr : r with
   | none =>
-    simp only [hr, Option.map_none]
     -- HaltsIn prog n j
     obtain ⟨_, m_halt, hrun, hstep⟩ := hnone hr
     refine ⟨RegMap.unfmap m_halt, ?_, ?_⟩
@@ -712,7 +711,6 @@ theorem regRun_correct : Correct regRunNat := by
       have hwf_halt := regRun_wf prog (RegMap.facmap n) (RegMap.facmap_wf n) hw j m_halt hrun
       rw [← regStep_correct prog m_halt hwf_halt hw, hstep]; rfl
   | some m' =>
-    simp only [hr, Option.map_some]
     obtain ⟨hjk, hrun⟩ := hsome m' hr
     refine ⟨by omega, ?_⟩
     rw [regRun_eq prog n j hn hw, hjk, hrun]; rfl

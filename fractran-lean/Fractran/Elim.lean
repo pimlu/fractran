@@ -494,7 +494,6 @@ theorem elimRun_correct : Correct elimRunNat := by
   obtain ⟨hsome, hnone⟩ := hspec
   cases hr : r with
   | none =>
-    simp only [hr, Option.map_none]
     obtain ⟨_, m_halt, hrun, hstep⟩ := hnone hr
     refine ⟨RegMap.unfmap m_halt, ?_, ?_⟩
     · rw [regRun_eq prog n j hn hw, hrun]; rfl
@@ -502,7 +501,6 @@ theorem elimRun_correct : Correct elimRunNat := by
       rw [← regStep_correct prog m_halt hwf_halt hw, hstep]; rfl
   | some mc =>
     obtain ⟨m', c'⟩ := mc
-    simp only [hr, Option.map_some]
     obtain ⟨hjk, hrun⟩ := hsome m' c' hr
     refine ⟨by omega, ?_⟩
     rw [regRun_eq prog n j hn hw, hjk, hrun]; rfl

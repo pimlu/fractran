@@ -117,60 +117,36 @@ def selfInterpStart (prog : FractranProg) (n : ℕ) (b : ℕ) : RegMap :=
   let fP := encodeProg prog b
   (((Std.TreeMap.empty.insert 31 fP).insert 17 n).insert 5 13).insert 19 1
 
-/-- Run the register interpreter on a RegMap, returning the final RegMap. -/
-def regRunFinal (rprog : List (RegMap × RegMap)) (m : RegMap)
-    (fuel : ℕ) : RegMap × ℕ :=
-  go m fuel 0
-where
-  go (m : RegMap) : ℕ → ℕ → RegMap × ℕ
-    | 0,     steps => (m, steps)
-    | k + 1, steps =>
-      match regStep rprog m with
-      | none    => (m, steps)
-      | some m' => go m' k (steps + 1)
-
-/-- Run the cycle-detecting interpreter on a RegMap.
-    Wrapper around `cycleRunAux` from Cycle.lean.
-    Returns the final RegMap and the number of steps simulated. -/
-def cycleRunFinal (rprog : List (RegMap × RegMap)) (m : RegMap)
-    (cyclen : ℕ) (hcyclen : 0 < cyclen) (fuel : ℕ) : RegMap × ℕ :=
-  let table := optTable rprog
-  let fallback := allCandidates rprog
-  let thresh := dthreshMap rprog cyclen
-  let dmaxes := dmaxesMap rprog
-  let initState : CycleState :=
-    { m := m
-      cands := fallback
-      buf := CBuf.empty cyclen hcyclen
-      stepsSimulated := 0 }
-  let result := cycleRunAux table fallback thresh dmaxes initState fuel
-  (result.m, result.stepsSimulated)
-
 def runSelfInterp : IO Unit := do
   let b := 2
   let innerProg : FractranProg := [(5, 2), (5, 3)]
   let inputN := 6
   let prog := selfInterpProg b
-  let rprog := prog.toRegProg
   let startMap := selfInterpStart innerProg inputN b
+  let startN := RegMap.unfmap startMap
   IO.println s!"--- Self-interpreter demo ---"
   IO.println s!"Inner program: {innerProg}"
   IO.println s!"Input: {inputN}"
   IO.println s!"Base: {b}"
   IO.println s!"Program encoding: {encodeProg innerProg b}"
   IO.println s!"Self-interp has {prog.length} fractions"
-  let cyclen := 4
-  let (finalMap, steps) := cycleRunFinal rprog startMap cyclen (by omega) 1000000000
-  let result := finalMap.getD 17 0
+  let cyclen := 10
+  let (resultOpt, steps) := cycleRunNat cyclen (by omega) prog startN 1000000000
   IO.println s!"Cycle length: {cyclen}"
   IO.println s!"Steps taken: {steps}"
-  IO.println s!"Register 17 (result): {result}"
-  IO.println s!"Expected: 25"
-  if result == 25 then
-    IO.println "SUCCESS!"
-  else
-    IO.println s!"Got {result}, investigating..."
-    IO.println s!"Final registers: {finalMap.toList}"
+  match resultOpt with
+  | some finalN =>
+    let finalMap := RegMap.facmap finalN
+    let result := finalMap.getD 17 0
+    IO.println s!"Register 17 (result): {result}"
+    IO.println s!"Expected: 25"
+    if result == 25 then
+      IO.println "SUCCESS!"
+    else
+      IO.println s!"Got {result}, investigating..."
+      IO.println s!"Final registers: {finalMap.toList}"
+  | none =>
+    IO.println s!"Halted after {steps} steps before producing a result"
   IO.println ""
 
 def runCycleTest : IO Unit := do
@@ -198,4 +174,4 @@ def runCycleTest : IO Unit := do
   IO.println ""
 
 def main : IO Unit := do
-  runCycleTest
+  runSelfInterp
