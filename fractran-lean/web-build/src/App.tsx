@@ -19,6 +19,7 @@ const DEFAULT_CYCLEN = '2';
 interface DecodedOk {
   kind: 'ok';
   halted: boolean;
+  loopLen: bigint;
   steps: bigint;
   factors: Map<bigint, bigint>;
 }
@@ -31,15 +32,23 @@ function decodeResult(text: string): DecodedOk | DecodedErr {
   const parts = text.trim().split(/\s+/);
   if (parts[0] !== 'OK') return { kind: 'err', reason: text };
   const halted = parts[1] === '1';
-  const steps = BigInt(parts[2] ?? '0');
-  const count = Number(parts[3] ?? '0');
+  const loopLen = BigInt(parts[2] ?? '0');
+  const steps = BigInt(parts[3] ?? '0');
+  const count = Number(parts[4] ?? '0');
   const factors = new Map<bigint, bigint>();
   for (let i = 0; i < count; i++) {
-    const p = BigInt(parts[4 + i * 2] ?? '0');
-    const e = BigInt(parts[5 + i * 2] ?? '0');
+    const p = BigInt(parts[5 + i * 2] ?? '0');
+    const e = BigInt(parts[6 + i * 2] ?? '0');
     factors.set(p, e);
   }
-  return { kind: 'ok', halted, steps, factors };
+  return { kind: 'ok', halted, loopLen, steps, factors };
+}
+
+function formatState(factors: Map<bigint, bigint>): string {
+  if (factors.size === 0) return '1';
+  return [...factors.entries()]
+    .map(([p, e]) => (e === 1n ? `${p}` : `${p}^${e}`))
+    .join(' * ');
 }
 
 export default function App() {
@@ -227,14 +236,20 @@ export default function App() {
             : '(no result yet)'
           : decoded.kind === 'err'
             ? `error: ${decoded.reason}`
-            : [
-                `halted: ${decoded.halted}`,
-                `steps: ${decoded.steps.toString()}`,
-                `final state:`,
-                ...[...decoded.factors.entries()].map(
-                  ([p, e]) => `  ${p}^${e}`,
-                ),
-              ].join('\n')}
+            : decoded.loopLen > 0n
+              ? [
+                  `infinite loop of length ${decoded.loopLen.toString()} detected`,
+                  `  at state: ${formatState(decoded.factors)}`,
+                  `  after ${decoded.steps.toString()} steps`,
+                ].join('\n')
+              : [
+                  `halted: ${decoded.halted}`,
+                  `steps: ${decoded.steps.toString()}`,
+                  `final state:`,
+                  ...[...decoded.factors.entries()].map(
+                    ([p, e]) => `  ${p}^${e}`,
+                  ),
+                ].join('\n')}
       </Box>
     </Stack>
   );

@@ -2,24 +2,60 @@ import Fractran.Runtime.Cycle
 
 namespace Fractran.JsBridge.Runner
 
-/-- Like `cycleRunAux`, but with an early-exit when `st.halted` is set. Lets
-    callers pass an arbitrarily-large fuel without burning cycles after the
-    program halts. Structurally recursive on `Nat`, so no `partial def` (and no
-    Lean RC bugs around tail-call inc/dec patterns we hit with `partial`). -/
+/-- Result of running the cycle-detecting interpreter under the JS bridge:
+    the final `CycleState` plus the cycle length when the runner detected an
+    infinite loop (0 otherwise). The proof-side `cycleRunFromRegProg` doesn't
+    return this because `Correct` only distinguishes "halted" vs. "still
+    running"; the JS bridge surfaces the third case to the UI. -/
+structure RunResult where
+  state : CycleState
+  /-- Logic-state cycle length when an infinite loop was detected, else 0.
+      "Infinite loop" means: the buffer matched the current logic state, and
+      `leapCount` reported `none` (no data register has finite life), so no
+      number of cycle repetitions could ever escape. -/
+  loopLen : Nat := 0
+
+/-- Inspect the current state for a definite infinite loop without stepping.
+    Mirrors the cycle-detection branch of `cycleStep`: split the state, look
+    up the logic component in the buffer, and ask `leapCount` whether any
+    data register has finite life. `none` from `leapCount` means the cycle
+    is permanent — return its length. -/
+def detectInfiniteLoop (thresh dmaxes : RegMap) (st : CycleState) : Option Nat :=
+  if st.halted then none
+  else
+    let state := stateSplit thresh st.m
+    match st.buf.getRange Prod.snd state.snd with
+    | none => none
+    | some range =>
+      let startData := (range.getLast!).fst
+      let endData := state.fst
+      let history := endData :: (range.dropLast.map Prod.fst)
+      match leapCount dmaxes history startData endData with
+      | none => some range.length
+      | some _ => none
+
+/-- Like `cycleRunAux`, but with early-exit on `st.halted` and on definite
+    infinite-loop detection. Lets callers pass an arbitrarily-large fuel
+    without burning cycles after the program halts or after we've proven it
+    will never halt. Structurally recursive on `Nat`, so no `partial def`. -/
 def runWithLimit (table : Array (List Candidate))
     (fallback : List Candidate) (thresh dmaxes : RegMap) :
-    CycleState → Nat → CycleState
-  | st, 0 => st
+    CycleState → Nat → RunResult
+  | st, 0 => { state := st }
   | st, fuel + 1 =>
-    if st.halted then st
-    else runWithLimit table fallback thresh dmaxes
-      (cycleStep table fallback thresh dmaxes st) fuel
+    if st.halted then { state := st }
+    else
+      match detectInfiniteLoop thresh dmaxes st with
+      | some k => { state := st, loopLen := k }
+      | none => runWithLimit table fallback thresh dmaxes
+        (cycleStep table fallback thresh dmaxes st) fuel
 
 /-- Effectively-unbounded analog of `cycleRunFromRegProg`. Hardcodes a fuel of
-    `2^63`; halting programs short-circuit on the `halted` check, while truly
-    nonterminating ones rely on the worker being `terminate()`d externally. -/
+    `2^63`; halting programs short-circuit on the `halted` check, definite
+    infinite loops short-circuit on `detectInfiniteLoop`, and anything else
+    relies on the worker being `terminate()`d externally. -/
 def cycleRunUntilHalt (cyclen : Nat) (hcyclen : 0 < cyclen)
-    (regProg : List (RegMap × RegMap)) (m : RegMap) : CycleState :=
+    (regProg : List (RegMap × RegMap)) (m : RegMap) : RunResult :=
   let table := optTable regProg
   let cands := allCandidates regProg
   let thresh := dthreshMap regProg cyclen
@@ -52,9 +88,13 @@ Input:
 
 Output:
 ```
-OK <halted:0|1> <stepsSimulated> <result_factor_count> <p_1> <e_1> ...
+OK <halted:0|1> <loopLen> <stepsSimulated> <result_factor_count> <p_1> <e_1> ...
 ```
-or `ERR <reason>` on parse failure / preconditions.
+`loopLen = 0` means no infinite loop was detected (program either halted or
+hit fuel exhaustion). `loopLen > 0` means the runner detected a definite
+infinite loop of that cycle length; `result_factor_count`/factors describe
+the state at the point of detection. `ERR <reason>` on parse failure /
+preconditions.
 -/
 
 namespace Fractran.JsBridge
@@ -90,9 +130,10 @@ private def encodeRegMap (m : RegMap) : String :=
   let body := factors.foldl (fun acc (p, e) => acc ++ s!" {p} {e}") ""
   s!"{factors.length}{body}"
 
-private def encodeResult (st : CycleState) : String :=
+private def encodeResult (r : Runner.RunResult) : String :=
+  let st := r.state
   let halted := if st.halted then 1 else 0
-  s!"OK {halted} {st.stepsSimulated} {encodeRegMap st.m}"
+  s!"OK {halted} {r.loopLen} {st.stepsSimulated} {encodeRegMap st.m}"
 
 def fractranRunStr (input : String) : String :=
   match tokenize input with
