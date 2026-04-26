@@ -114,6 +114,16 @@ def hasKey [BEq β] (cb : CBuf α) (keyFn : α → β) (key : β) : Bool :=
 
 /-! ## Specification lemmas -/
 
+@[simp] theorem cap_empty (cap : Nat) (h : 0 < cap) :
+    (empty cap h : CBuf α).cap = cap := rfl
+
+@[simp] theorem cap_insert (cb : CBuf α) (x : α) :
+    (cb.insert x).cap = cb.cap := by
+  simp only [insert]; split <;> rfl
+
+@[simp] theorem hCapPos_empty (cap : Nat) (h : 0 < cap) :
+    (empty cap h : CBuf α).hCapPos = h := rfl
+
 @[simp] theorem len_empty (cap : Nat) (h : 0 < cap) :
     (empty cap h : CBuf α).len = 0 := by
   simp [len, empty]
@@ -316,5 +326,15 @@ theorem getRange_some_spec [BEq β] [LawfulBEq β] (cb : CBuf α) (keyFn : α �
     rw [List.getLast_eq_getElem]
     simp only [List.getElem_take, hlen]
     simpa using hpidx
+
+/-- When `getRange` returns `some l`, `l` is non-empty. -/
+theorem getRange_length_pos [BEq β] (cb : CBuf α) (keyFn : α → β) (key : β)
+    (l : List α) (h : cb.getRange keyFn key = some l) :
+    0 < l.length := by
+  simp only [getRange, Option.map_eq_some_iff] at h
+  obtain ⟨idx, hfind, rfl⟩ := h
+  rw [List.length_take]
+  have := (List.findIdx?_eq_some_iff_getElem.mp hfind).1
+  omega
 
 end CBuf

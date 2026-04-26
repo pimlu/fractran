@@ -344,7 +344,7 @@ lemma wf_applyFrac (num den m : RegMap) (hnum : WF num) (hm : WF m) :
 
 /-! ## Factorization bridge -/
 
-private lemma unfmap_pos (m : RegMap) (hm : WF m) : 0 < unfmap m := by
+lemma unfmap_pos (m : RegMap) (hm : WF m) : 0 < unfmap m := by
   have h : unfmap m ≠ 0 := by
     rw [unfmap_eq_toFinsupp_prod, Finsupp.prod_ne_zero_iff]
     intro p hp
@@ -354,7 +354,7 @@ private lemma unfmap_pos (m : RegMap) (hm : WF m) : 0 < unfmap m := by
     exact (hm p (by by_contra h'; exact hsupp (Std.TreeMap.getD_eq_fallback h'))).pos.ne'
   omega
 
-private lemma factorization_unfmap_eq_toFinsupp (m : RegMap) (hm : WF m) :
+lemma factorization_unfmap_eq_toFinsupp (m : RegMap) (hm : WF m) :
     (unfmap m).factorization = toFinsupp m := by
   have hsupp_prime : ∀ p ∈ (toFinsupp m).support, p.Prime := fun p hp => by
     have hne : (toFinsupp m) p ≠ 0 := Finsupp.mem_support_iff.mp hp
@@ -366,6 +366,17 @@ private lemma factorization_unfmap_eq_toFinsupp (m : RegMap) (hm : WF m) :
       Finset.sum_congr rfl (fun p hp => (hsupp_prime p hp).factorization_pow)]
   change (toFinsupp m).sum Finsupp.single = toFinsupp m
   exact Finsupp.sum_single (toFinsupp m)
+
+/-- Two WF maps with the same `unfmap` agree on all `getD` values. -/
+lemma getD_eq_of_unfmap_eq (m₁ m₂ : RegMap) (h₁ : WF m₁) (h₂ : WF m₂)
+    (heq : unfmap m₁ = unfmap m₂) (p : ℕ) : m₁.getD p 0 = m₂.getD p 0 := by
+  have hfs : toFinsupp m₁ = toFinsupp m₂ := by
+    rw [← factorization_unfmap_eq_toFinsupp m₁ h₁,
+        ← factorization_unfmap_eq_toFinsupp m₂ h₂, heq]
+  have h₁p := toFinsupp_apply m₁ p
+  have h₂p := toFinsupp_apply m₂ p
+  rw [hfs] at h₁p
+  omega
 
 /-! ## Divisibility ↔ applicable (for well-formed maps) -/
 
@@ -519,11 +530,25 @@ def regRun (prog : List (RegMap × RegMap)) (m : RegMap) : ℕ → Option RegMap
   | 0     => some m
   | k + 1 => regRun prog m k >>= regStep prog
 
-/-- Nat-level wrapper around `regRun` conforming to the `Correct` interface.
-    Returns `(result, k)` where `result` is the state option after `k` naive steps.
-    For this impl `j = k` exactly (one naive step per internal step, no skipping). -/
+/-- Halt-aware variant of `regRun`: returns the final state and the exact number
+    of successful naive steps. If the program halts before fuel runs out, the
+    step count is the count of successful steps before halting (so `j < k`);
+    otherwise `j = k`. -/
+def regRunExact (prog : List (RegMap × RegMap)) : RegMap → ℕ → Option RegMap × ℕ
+  | m, 0     => (some m, 0)
+  | m, k + 1 =>
+    match regStep prog m with
+    | none    => (none, 0)
+    | some m' =>
+      let res := regRunExact prog m' k
+      (res.1, res.2 + 1)
+
+/-- Nat-level wrapper around `regRunExact` conforming to the `Correct` interface.
+    When still running, returns `(some m, k)`. When halted, returns `(none, j)`
+    where `j` is the exact number of successful naive steps before halting. -/
 def regRunNat (prog : FractranProg) (n k : ℕ) : Option ℕ × ℕ :=
-  ((regRun prog.toRegProg (RegMap.facmap n) k).map RegMap.unfmap, k)
+  let (r, j) := regRunExact prog.toRegProg (RegMap.facmap n) k
+  (r.map RegMap.unfmap, j)
 
 /-! ## Multi-step correctness -/
 
@@ -585,43 +610,109 @@ lemma regRun_wf (prog : FractranProg) (m : RegMap) (hm : RegMap.WF m)
       simp only [hk] at h
       exact regStep_wf prog m'' (ih m hm m'' hk) hw m' h
 
-/-- Register run agrees with naive run at every step count. -/
-lemma regRun_eq (prog : FractranProg) (n k : ℕ) (hn : 0 < n) (hw : prog.WellFormed) :
-    naiveRun prog n k =
-    (regRun prog.toRegProg (RegMap.facmap n) k).map RegMap.unfmap := by
-  -- Stronger induction: carry RegMap state and its WF through
-  suffices h : ∀ (m : RegMap) (hm : RegMap.WF m),
-      (regRun prog.toRegProg m k).map RegMap.unfmap =
-      naiveRun prog (RegMap.unfmap m) k from by
-    rw [h _ (RegMap.facmap_wf n), RegMap.facmap_unfmap n hn]
-  intro m hm
+/-- The RegMap-level register run maps to the naive run via `unfmap`. -/
+lemma regRun_map_unfmap (prog : FractranProg) (m : RegMap) (hm : RegMap.WF m) (k : ℕ)
+    (hw : prog.WellFormed) :
+    (regRun prog.toRegProg m k).map RegMap.unfmap =
+    naiveRun prog (RegMap.unfmap m) k := by
   induction k generalizing m with
   | zero => simp [naiveRun, regRun]
   | succ k ih =>
     simp only [naiveRun, regRun]
-    -- Use ih to get the relationship at step k
     have hih := ih m hm
-    -- Case split on regRun result at step k
     cases hk : regRun prog.toRegProg m k with
     | none =>
       simp only [hk, Option.map_none] at hih
-      -- hih : none = naiveRun prog (unfmap m) k
-      -- Goal: (none >>= regStep ...).map unfmap = naiveRun ... k >>= naiveStep prog
       rw [← hih]; rfl
     | some m' =>
       simp only [hk, Option.map_some] at hih
-      -- hih : some (unfmap m') = naiveRun prog (unfmap m) k
-      -- Goal: (some m' >>= regStep ...).map unfmap = naiveRun ... k >>= naiveStep prog
       have hm' := regRun_wf prog m hm hw k m' hk
       rw [← hih]
-      -- Goal: (some m' >>= regStep ...).map unfmap = some (unfmap m') >>= naiveStep prog
-      -- Both sides: (regStep ... m').map unfmap = naiveStep prog (unfmap m')
       change (regStep prog.toRegProg m').map RegMap.unfmap = naiveStep prog (RegMap.unfmap m')
       exact regStep_correct prog m' hm' hw
+
+/-- Register run agrees with naive run at every step count. -/
+lemma regRun_eq (prog : FractranProg) (n k : ℕ) (hn : 0 < n) (hw : prog.WellFormed) :
+    naiveRun prog n k =
+    (regRun prog.toRegProg (RegMap.facmap n) k).map RegMap.unfmap := by
+  rw [regRun_map_unfmap prog _ (RegMap.facmap_wf n) k hw, RegMap.facmap_unfmap n hn]
+
+/-- `regRun prog m (k+1)` after one step `regStep prog m = some m'` equals
+    `regRun prog m' k`. -/
+lemma regRun_step_succ (prog : List (RegMap × RegMap)) (m m' : RegMap) (k : ℕ)
+    (h : regStep prog m = some m') :
+    regRun prog m (k + 1) = regRun prog m' k := by
+  induction k with
+  | zero =>
+    show regRun prog m 0 >>= regStep prog = some m'
+    simp [regRun, h]
+  | succ k ih =>
+    show regRun prog m (k + 1) >>= regStep prog = regRun prog m' k >>= regStep prog
+    rw [ih]
+
+/-- Specification of `regRunExact`. Either it ran the full `k` steps without
+    halting, or it halted at some step `j ≤ k` (with the halt witness). -/
+lemma regRunExact_correct (prog : List (RegMap × RegMap)) (m : RegMap) (k : ℕ) :
+    let (r, j) := regRunExact prog m k
+    (∀ m', r = some m' → j = k ∧ regRun prog m k = some m') ∧
+    (r = none → j ≤ k ∧ ∃ m_halt, regRun prog m j = some m_halt ∧ regStep prog m_halt = none) := by
+  induction k generalizing m with
+  | zero =>
+    simp only [regRunExact]
+    refine ⟨?_, ?_⟩
+    · intro m' hm'
+      have hm_eq : m' = m := (Option.some.inj hm').symm
+      refine ⟨?_, ?_⟩
+      · trivial
+      · rw [hm_eq]; rfl
+    · intro h; exact absurd h (by simp)
+  | succ k ih =>
+    simp only [regRunExact]
+    cases hstep : regStep prog m with
+    | none =>
+      refine ⟨?_, ?_⟩
+      · intro m' hm'; exact absurd hm' (by simp)
+      · intro _; exact ⟨Nat.zero_le _, m, rfl, hstep⟩
+    | some m' =>
+      have ih_m' := ih m'
+      cases hres : regRunExact prog m' k with
+      | mk r j =>
+        simp only [hres] at ih_m' ⊢
+        obtain ⟨ih1, ih2⟩ := ih_m'
+        refine ⟨?_, ?_⟩
+        · intro m'' hm''
+          obtain ⟨hjk, hrr⟩ := ih1 m'' hm''
+          refine ⟨by omega, ?_⟩
+          rw [regRun_step_succ prog m m' k hstep]; exact hrr
+        · intro hr
+          obtain ⟨hjk, m_halt, hrun, hstep_halt⟩ := ih2 hr
+          refine ⟨by omega, m_halt, ?_, hstep_halt⟩
+          rw [regRun_step_succ prog m m' j hstep]; exact hrun
 
 /-- The register interpreter satisfies the `Correct` predicate.
     Requires well-formed programs and `0 < n` since `facmap 0 = ∅ = facmap 1`. -/
 theorem regRun_correct : Correct regRunNat := by
   intro prog n k hw hn
   simp only [regRunNat]
-  exact ⟨le_refl _, regRun_eq prog n k hn hw⟩
+  set rex := regRunExact prog.toRegProg (RegMap.facmap n) k with hrex
+  obtain ⟨r, j⟩ := rex
+  have hspec := regRunExact_correct prog.toRegProg (RegMap.facmap n) k
+  rw [← hrex] at hspec
+  simp only at hspec
+  obtain ⟨hsome, hnone⟩ := hspec
+  cases hr : r with
+  | none =>
+    simp only [hr, Option.map_none]
+    -- HaltsIn prog n j
+    obtain ⟨_, m_halt, hrun, hstep⟩ := hnone hr
+    refine ⟨RegMap.unfmap m_halt, ?_, ?_⟩
+    · -- naiveRun prog n j = some (unfmap m_halt)
+      rw [regRun_eq prog n j hn hw, hrun]; rfl
+    · -- naiveStep prog (unfmap m_halt) = none
+      have hwf_halt := regRun_wf prog (RegMap.facmap n) (RegMap.facmap_wf n) hw j m_halt hrun
+      rw [← regStep_correct prog m_halt hwf_halt hw, hstep]; rfl
+  | some m' =>
+    simp only [hr, Option.map_some]
+    obtain ⟨hjk, hrun⟩ := hsome m' hr
+    refine ⟨by omega, ?_⟩
+    rw [regRun_eq prog n j hn hw, hjk, hrun]; rfl

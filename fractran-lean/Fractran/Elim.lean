@@ -88,12 +88,29 @@ def elimRun (table : Array (List Candidate))
     (m : RegMap) (cands : List Candidate) (k : Nat) : Option RegMap :=
   (elimRunAux table fallback m cands k).map Prod.fst
 
-/-- Nat-level elimination interpreter conforming to the `Correct` interface. -/
+/-- Halt-aware variant of `elimRunAux`: returns the result and the exact number
+    of successful steps. If the program halts before fuel runs out, the step
+    count is the count of successful steps before halting; otherwise it is `k`. -/
+def elimRunExactAux (table : Array (List Candidate)) (fallback : List Candidate) :
+    RegMap → List Candidate → Nat → Option (RegMap × List Candidate) × Nat
+  | m, cands, 0     => (some (m, cands), 0)
+  | m, cands, k + 1 =>
+    match elimStep cands m with
+    | none         => (none, 0)
+    | some (i, m') =>
+      let nextCands := if h : i < table.size then table[i] else fallback
+      let res := elimRunExactAux table fallback m' nextCands k
+      (res.1, res.2 + 1)
+
+/-- Nat-level elimination interpreter conforming to the `Correct` interface.
+    When still running after `k` steps, returns `(some m, k)`. When halted,
+    returns `(none, j)` where `j` is the exact number of successful steps. -/
 def elimRunNat (prog : FractranProg) (n k : ℕ) : Option ℕ × ℕ :=
   let regProg := prog.toRegProg
   let table := optTable regProg
   let cands := allCandidates regProg
-  (elimRun table cands (RegMap.facmap n) cands k |>.map RegMap.unfmap, k)
+  let (r, j) := elimRunExactAux table cands (RegMap.facmap n) cands k
+  (r.map (fun mc => RegMap.unfmap mc.1), j)
 
 /-! ## Invariant -/
 
@@ -354,7 +371,7 @@ theorem optTable_preserves_invariant (prog : List (RegMap × RegMap))
 
 /-- `elimRunAux` agrees with `regRun` on the state component, and preserves
     the elimination invariant at every intermediate step. -/
-private theorem elimRunAux_spec (regProg : List (RegMap × RegMap))
+theorem elimRunAux_spec (regProg : List (RegMap × RegMap))
     (k : Nat) (m : RegMap) (cands : List Candidate)
     (hinv : ElimInvariant regProg cands m) :
     (elimRunAux (optTable regProg) (allCandidates regProg) m cands k).map Prod.fst =
@@ -404,16 +421,90 @@ private theorem elimRunAux_spec (regProg : List (RegMap × RegMap))
           · rw [← heq2]
             exact allCandidates_invariant regProg m''
 
+/-- Specification of `elimRunExactAux`. Either it ran the full `k` steps without
+    halting (and the state matches `regRun`), or it halted at some step `j ≤ k`. -/
+lemma elimRunExactAux_correct (regProg : List (RegMap × RegMap))
+    (k : Nat) (m : RegMap) (cands : List Candidate)
+    (hinv : ElimInvariant regProg cands m) :
+    let (r, j) := elimRunExactAux (optTable regProg) (allCandidates regProg) m cands k
+    (∀ m' c', r = some (m', c') → j = k ∧ regRun regProg m k = some m') ∧
+    (r = none → j ≤ k ∧ ∃ m_halt, regRun regProg m j = some m_halt ∧
+      regStep regProg m_halt = none) := by
+  induction k generalizing m cands with
+  | zero =>
+    simp only [elimRunExactAux]
+    refine ⟨?_, ?_⟩
+    · intro m' c' h
+      have : (m, cands) = (m', c') := Option.some.inj h
+      have hm_eq : m' = m := (Prod.mk.inj this).1.symm
+      refine ⟨trivial, ?_⟩
+      rw [hm_eq]; rfl
+    · intro h; exact absurd h (by simp)
+  | succ k ih =>
+    simp only [elimRunExactAux]
+    have hstep_eq := elimStep_eq_regStep regProg cands m hinv
+    cases hs : elimStep cands m with
+    | none =>
+      simp only [hs, Option.map_none] at hstep_eq
+      refine ⟨?_, ?_⟩
+      · intro m' c' h; exact absurd h (by simp)
+      · intro _
+        refine ⟨Nat.zero_le _, m, rfl, hstep_eq.symm⟩
+    | some im' =>
+      obtain ⟨i, m'⟩ := im'
+      simp only [hs, Option.map_some] at hstep_eq
+      have hregstep : regStep regProg m = some m' := hstep_eq.symm
+      have hinv' : ElimInvariant regProg
+          (if h : i < (optTable regProg).size then (optTable regProg)[i] else allCandidates regProg)
+          m' := by
+        split
+        · next hi => exact optTable_preserves_invariant regProg cands m hinv i m' hs hi
+        · exact allCandidates_invariant regProg m'
+      have ih_m' := ih m' _ hinv'
+      cases hres : elimRunExactAux (optTable regProg) (allCandidates regProg) m'
+          (if h : i < (optTable regProg).size then (optTable regProg)[i]
+           else allCandidates regProg) k with
+      | mk r j =>
+        simp only [hres] at ih_m' ⊢
+        obtain ⟨ih1, ih2⟩ := ih_m'
+        refine ⟨?_, ?_⟩
+        · intro m'' c'' h
+          obtain ⟨hjk, hrr⟩ := ih1 m'' c'' h
+          refine ⟨by omega, ?_⟩
+          rw [regRun_step_succ regProg m m' k hregstep]
+          exact hjk ▸ hrr
+        · intro hr
+          obtain ⟨hjk, m_halt, hrun, hstep_halt⟩ := ih2 hr
+          refine ⟨by omega, m_halt, ?_, hstep_halt⟩
+          rw [regRun_step_succ regProg m m' j hregstep]
+          exact hrun
+
 /-- The elimination interpreter satisfies `Correct`. -/
 theorem elimRun_correct : Correct elimRunNat := by
   intro prog n k hw hn
-  simp only [elimRunNat, elimRun]
+  simp only [elimRunNat]
   have hinv := allCandidates_invariant prog.toRegProg (RegMap.facmap n)
-  have ⟨heq, _⟩ := elimRunAux_spec prog.toRegProg k _ _ hinv
-  constructor
-  · exact le_refl _
-  · rw [regRun_eq prog n k hn hw]
-    congr 1
-    exact heq.symm
+  set rex := elimRunExactAux (optTable prog.toRegProg) (allCandidates prog.toRegProg)
+              (RegMap.facmap n) (allCandidates prog.toRegProg) k with hrex
+  obtain ⟨r, j⟩ := rex
+  have hspec := elimRunExactAux_correct prog.toRegProg k (RegMap.facmap n)
+                  (allCandidates prog.toRegProg) hinv
+  rw [← hrex] at hspec
+  simp only at hspec
+  obtain ⟨hsome, hnone⟩ := hspec
+  cases hr : r with
+  | none =>
+    simp only [hr, Option.map_none]
+    obtain ⟨_, m_halt, hrun, hstep⟩ := hnone hr
+    refine ⟨RegMap.unfmap m_halt, ?_, ?_⟩
+    · rw [regRun_eq prog n j hn hw, hrun]; rfl
+    · have hwf_halt := regRun_wf prog (RegMap.facmap n) (RegMap.facmap_wf n) hw j m_halt hrun
+      rw [← regStep_correct prog m_halt hwf_halt hw, hstep]; rfl
+  | some mc =>
+    obtain ⟨m', c'⟩ := mc
+    simp only [hr, Option.map_some]
+    obtain ⟨hjk, hrun⟩ := hsome m' c' hr
+    refine ⟨by omega, ?_⟩
+    rw [regRun_eq prog n j hn hw, hjk, hrun]; rfl
 
 end Correctness

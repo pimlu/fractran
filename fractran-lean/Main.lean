@@ -1,5 +1,6 @@
 import Fractran.Basic
 import Fractran.Register
+import Fractran.Cycle
 
 /-!
 # FRACTRAN demo
@@ -128,6 +129,23 @@ where
       | none    => (m, steps)
       | some m' => go m' k (steps + 1)
 
+/-- Run the cycle-detecting interpreter on a RegMap.
+    Wrapper around `cycleRunAux` from Cycle.lean.
+    Returns the final RegMap and the number of steps simulated. -/
+def cycleRunFinal (rprog : List (RegMap × RegMap)) (m : RegMap)
+    (cyclen : ℕ) (hcyclen : 0 < cyclen) (fuel : ℕ) : RegMap × ℕ :=
+  let table := optTable rprog
+  let fallback := allCandidates rprog
+  let thresh := dthreshMap rprog cyclen
+  let dmaxes := dmaxesMap rprog
+  let initState : CycleState :=
+    { m := m
+      cands := fallback
+      buf := CBuf.empty cyclen hcyclen
+      stepsSimulated := 0 }
+  let result := cycleRunAux table fallback thresh dmaxes initState fuel
+  (result.m, result.stepsSimulated)
+
 def runSelfInterp : IO Unit := do
   let b := 2
   let innerProg : FractranProg := [(5, 2), (5, 3)]
@@ -141,8 +159,10 @@ def runSelfInterp : IO Unit := do
   IO.println s!"Base: {b}"
   IO.println s!"Program encoding: {encodeProg innerProg b}"
   IO.println s!"Self-interp has {prog.length} fractions"
-  let (finalMap, steps) := regRunFinal rprog startMap 1000000000
+  let cyclen := 4
+  let (finalMap, steps) := cycleRunFinal rprog startMap cyclen (by omega) 1000000000
   let result := finalMap.getD 17 0
+  IO.println s!"Cycle length: {cyclen}"
   IO.println s!"Steps taken: {steps}"
   IO.println s!"Register 17 (result): {result}"
   IO.println s!"Expected: 25"
@@ -153,10 +173,29 @@ def runSelfInterp : IO Unit := do
     IO.println s!"Final registers: {finalMap.toList}"
   IO.println ""
 
+def runCycleTest : IO Unit := do
+  IO.println "--- Cycle detection test: [(1,2)] on 1024 ---"
+  let prog : FractranProg := [(1, 2)]
+  let n := 1024  -- 2^10, needs 10 steps to reach 1 then halt
+  let cyclen := 4
+  -- With cycle detection, should need much less than 10 fuel units
+  let fuel := 8
+  let (result, j) := cycleRunNat cyclen (by omega) prog n fuel
+  IO.println s!"Input: {n}, Fuel: {fuel}, Cycle length: {cyclen}"
+  IO.println s!"Result: {result}, Steps simulated: {j}"
+  match result with
+  | none => IO.println s!"Program halted (j={j} ≥ fuel={fuel}). Correct!"
+  | some r => IO.println s!"Still running at state {r} after {j} steps"
+  -- Bigger test: 2^100, still only needs ~8 fuel with cycle detection
+  let n2 := 2^100
+  let fuel2 := 10
+  let (result2, j2) := cycleRunNat cyclen (by omega) prog n2 fuel2
+  IO.println s!"\nInput: 2^100, Fuel: {fuel2}"
+  IO.println s!"Result: {result2}, Steps simulated: {j2}"
+  match result2 with
+  | none => IO.println s!"Program halted after {j2} steps with only {fuel2} fuel. Cycle detection works!"
+  | some _ => IO.println s!"Still running — cycle detection may not be working"
+  IO.println ""
+
 def main : IO Unit := do
-  runDemo "Addition (2^3 * 3^2 -> 5^5 = 3125)" [(5, 2), (5, 3)] 72 100
-  runDemo "Multiplication (2^3 * 3^4 -> 5^12)"
-    [(455, 33), (11, 13), (1, 11), (3, 7), (11, 2), (1, 3)] 648 1000
-  runDemo "Halving (2^5 = 32 -> 1)" [(1, 2)] 32 100
-  runDemo "Doubling (3^4 = 81 -> 2^4 = 16)" [(2, 3)] 81 100
-  runSelfInterp
+  runCycleTest

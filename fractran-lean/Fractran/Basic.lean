@@ -28,11 +28,10 @@ def HaltsIn (prog : FractranProg) (n : ℕ) (k : ℕ) : Prop :=
     `none` = halted) and `j` is the number of naive steps simulated.
 
     Correctness requires:
-    - `j ≥ k`: at least as many naive steps are simulated as fuel consumed, and
-    - `naiveRun prog n j = result`: the naive interpreter agrees at `j` steps.
-
-    This handles both normal halts (`none`) and cycle detection (`some s`, where the
-    interpreter stopped early but FRACTRAN was still running) uniformly.
+    - If `result = none`: the program halted at exactly `j` successful steps
+      (i.e., `HaltsIn prog n j`). `j` may be less than `k`.
+    - If `result = some m`: the program is still running at state `m` after `j` steps,
+      with `j ≥ k` (a cycle-detecting interpreter may simulate beyond fuel via leaping).
 
     Restricted to well-formed programs (positive numerators and denominators),
     which is standard for FRACTRAN (Conway's formulation uses positive rationals). -/
@@ -42,4 +41,6 @@ def FractranProg.WellFormed (prog : FractranProg) : Prop :=
 def Correct (interp : FractranProg → ℕ → ℕ → Option ℕ × ℕ) : Prop :=
   ∀ prog n k, prog.WellFormed → 0 < n →
     let (result, j) := interp prog n k
-    k ≤ j ∧ naiveRun prog n j = result
+    match result with
+    | none => HaltsIn prog n j
+    | some m => k ≤ j ∧ naiveRun prog n j = some m
