@@ -173,5 +173,42 @@ def runCycleTest : IO Unit := do
   | some _ => IO.println s!"Still running — cycle detection may not be working"
   IO.println ""
 
+/-- Hamming weight (popcount) demo from src/Demo.hs.
+    `hamming` computes popcount(k) into the exponent of 13, given input 2^k.
+    Uses cycle detection with cyclen=2 (matches Haskell `cycles' 2`).
+
+    Calls `cycleRunAux` directly so we can read the final RegMap on halt
+    (`cycleRunNat` discards it via the `Correct` interface). -/
+def runHamming (k : ℕ) : IO Unit := do
+  let prog : FractranProg :=
+    [(33, 20), (5, 11), (13, 10), (1, 5), (2, 3), (10, 7), (7, 2)]
+  let kpop := 2 ^ k - 1     -- bitstring of `k` ones; popcount = k
+  let input := 2 ^ kpop
+  let cyclen := 2
+  let fuel := 100000000
+  let regProg := prog.toRegProg
+  let table := optTable regProg
+  let cands := allCandidates regProg
+  let thresh := dthreshMap regProg cyclen
+  let dmaxes := dmaxesMap regProg
+  let initState : CycleState :=
+    { m := RegMap.facmap input
+      cands := cands
+      buf := CBuf.empty cyclen (by omega)
+      stepsSimulated := 0 }
+  let result := cycleRunAux table cands thresh dmaxes initState fuel
+  IO.println s!"--- Hamming weight of 2^(2^{k} - 1) ---"
+  IO.println s!"Input exponent of 2: {kpop}"
+  IO.println s!"Cycle length: {cyclen}, Steps simulated: {result.stepsSimulated}"
+  IO.println s!"Halted: {result.halted}"
+  let popcount := result.m.getD 13 0
+  IO.println s!"Hamming weight (exponent of 13): {popcount}"
+  IO.println s!"Expected: {k}"
+  if popcount == k && result.halted then
+    IO.println "SUCCESS!"
+  else
+    IO.println s!"Final registers: {result.m.toList}"
+  IO.println ""
+
 def main : IO Unit := do
-  runSelfInterp
+  runHamming 10
