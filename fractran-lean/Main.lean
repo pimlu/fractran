@@ -123,30 +123,28 @@ def runSelfInterp : IO Unit := do
   let inputN := 6
   let prog := selfInterpProg b
   let startMap := selfInterpStart innerProg inputN b
-  let startN := RegMap.unfmap startMap
   IO.println s!"--- Self-interpreter demo ---"
   IO.println s!"Inner program: {innerProg}"
   IO.println s!"Input: {inputN}"
   IO.println s!"Base: {b}"
   IO.println s!"Program encoding: {encodeProg innerProg b}"
   IO.println s!"Self-interp has {prog.length} fractions"
-  let cyclen := 10
-  let (resultOpt, steps) := cycleRunNat cyclen (by omega) prog startN 1000000000
+  let cyclen := 50
+  let fuel := 1000000
+  let result := cycleRunFromMap cyclen (by omega) prog startMap fuel
   IO.println s!"Cycle length: {cyclen}"
-  IO.println s!"Steps taken: {steps}"
-  match resultOpt with
-  | some finalN =>
-    let finalMap := RegMap.facmap finalN
-    let result := finalMap.getD 17 0
-    IO.println s!"Register 17 (result): {result}"
+  IO.println s!"Steps taken: {result.stepsSimulated}"
+  if result.halted then
+    let popcount := result.m.getD 17 0
+    IO.println s!"Register 17 (result): {popcount}"
     IO.println s!"Expected: 25"
-    if result == 25 then
+    if popcount == 25 then
       IO.println "SUCCESS!"
     else
-      IO.println s!"Got {result}, investigating..."
-      IO.println s!"Final registers: {finalMap.toList}"
-  | none =>
-    IO.println s!"Halted after {steps} steps before producing a result"
+      IO.println s!"Got {popcount}, investigating..."
+      IO.println s!"Final registers: {result.m.toList}"
+  else
+    IO.println s!"Did not halt after {result.stepsSimulated} steps"
   IO.println ""
 
 def runCycleTest : IO Unit := do
@@ -169,7 +167,7 @@ def runCycleTest : IO Unit := do
   IO.println s!"\nInput: 2^100, Fuel: {fuel2}"
   IO.println s!"Result: {result2}, Steps simulated: {j2}"
   match result2 with
-  | none => IO.println s!"Program halted after {j2} steps with only {fuel2} fuel. Cycle detection works!"
+  | none => IO.println s!"Program halted after {j2} steps with only {fuel2} fuel. It works!"
   | some _ => IO.println s!"Still running — cycle detection may not be working"
   IO.println ""
 
@@ -177,26 +175,17 @@ def runCycleTest : IO Unit := do
     `hamming` computes popcount(k) into the exponent of 13, given input 2^k.
     Uses cycle detection with cyclen=2 (matches Haskell `cycles' 2`).
 
-    Calls `cycleRunAux` directly so we can read the final RegMap on halt
-    (`cycleRunNat` discards it via the `Correct` interface). -/
+    Calls `cycleRunFromMap` so we can read the final RegMap on halt
+    (`cycleRunNat` discards it via the `Correct` interface), and so we can
+    skip the trial-division cost of factoring the giant `2^(2^k - 1)` input. -/
 def runHamming (k : ℕ) : IO Unit := do
   let prog : FractranProg :=
     [(33, 20), (5, 11), (13, 10), (1, 5), (2, 3), (10, 7), (7, 2)]
   let kpop := 2 ^ k - 1     -- bitstring of `k` ones; popcount = k
-  let input := 2 ^ kpop
   let cyclen := 2
-  let fuel := 100000000
-  let regProg := prog.toRegProg
-  let table := optTable regProg
-  let cands := allCandidates regProg
-  let thresh := dthreshMap regProg cyclen
-  let dmaxes := dmaxesMap regProg
-  let initState : CycleState :=
-    { m := RegMap.facmap input
-      cands := cands
-      buf := CBuf.empty cyclen (by omega)
-      stepsSimulated := 0 }
-  let result := cycleRunAux table cands thresh dmaxes initState fuel
+  let fuel := 1000000
+  let initMap : RegMap := Std.TreeMap.empty.insert 2 kpop
+  let result := cycleRunFromMap cyclen (by omega) prog initMap fuel
   IO.println s!"--- Hamming weight of 2^(2^{k} - 1) ---"
   IO.println s!"Input exponent of 2: {kpop}"
   IO.println s!"Cycle length: {cyclen}, Steps simulated: {result.stepsSimulated}"
@@ -211,4 +200,6 @@ def runHamming (k : ℕ) : IO Unit := do
   IO.println ""
 
 def main : IO Unit := do
-  runHamming 10
+  runCycleTest
+  runHamming 128
+  runSelfInterp

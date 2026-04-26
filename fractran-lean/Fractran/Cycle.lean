@@ -2887,6 +2887,28 @@ def cycleRunNat (cyclen : ℕ) (hcyclen : 0 < cyclen)
   else
     (some (RegMap.unfmap result.m), result.stepsSimulated)
 
+/-- Cycle-detecting interpreter starting from an explicit `RegMap`.
+
+    Returns the full final `CycleState` so callers can inspect halt status,
+    register values, and the simulated step count directly.
+
+    This avoids the trial-division cost of `RegMap.facmap` when the input is
+    naturally specified by its prime factorization (e.g. `2^(2^k - 1)`,
+    representable as the map `{2 ↦ 2^k - 1}`). -/
+def cycleRunFromMap (cyclen : ℕ) (hcyclen : 0 < cyclen)
+    (prog : FractranProg) (m : RegMap) (k : ℕ) : CycleState :=
+  let regProg := prog.toRegProg
+  let table := optTable regProg
+  let cands := allCandidates regProg
+  let thresh := dthreshMap regProg cyclen
+  let dmaxes := dmaxesMap regProg
+  let initState : CycleState :=
+    { m := m
+      cands := cands
+      buf := CBuf.empty cyclen hcyclen
+      stepsSimulated := 0 }
+  cycleRunAux table cands thresh dmaxes initState k
+
 /-! ## Top-level correctness -/
 
 /-- Once `naiveRun` returns `none` (halted), it stays `none` for all later steps. -/
