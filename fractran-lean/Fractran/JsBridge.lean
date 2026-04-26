@@ -32,30 +32,247 @@ repetitions) to "any number of repetitions are safe," which then implies
 
 namespace Fractran.JsBridge.Runner
 
+/-- One-step unfolding of `detectInfiniteLoop` with the `let` bindings inlined.
+    Holds definitionally, but exposed as a named lemma so that `rw` lets us
+    case-split on the underlying `if`/`match`/`match` without the lets
+    getting in the way. -/
+private theorem detectInfiniteLoop_unfold (thresh dmaxes : RegMap) (st : CycleState) :
+    detectInfiniteLoop thresh dmaxes st =
+      if st.halted then none
+      else
+        match st.buf.getRange Prod.snd (stateSplit thresh st.m).snd with
+        | none => none
+        | some range =>
+          match leapCount dmaxes
+              ((stateSplit thresh st.m).fst :: range.dropLast.map Prod.fst)
+              (range.getLast!).fst (stateSplit thresh st.m).fst with
+          | none => some range.length
+          | some _ => none := rfl
+
 /-- **Soundness of infinite-loop detection.** When `detectInfiniteLoop`
     fires, the program from `st` truly never halts.
 
     The mathematical claim: `leapCount` returning `none` means every data
-    register is constant or strictly increasing across one cycle, so the
-    cycle invariant survives any number of repetitions, so the same
-    fraction sequence fires forever, so `naiveStep` never returns `none`.
+    register has either zero data delta or a strictly increasing one (with
+    safe margin) across the cycle, so the cycle invariant survives any
+    number of repetitions, so the same fraction sequence fires forever, so
+    `naiveStep` never returns `none`.
 
-    Currently a `sorry`. Proving it requires extending `cycle_properties`
-    (which is currently parameterised by a specific safe-repetition count
-    `c`) to "for all `c`, c repetitions are safe under the
-    `leapCount = none` hypothesis," then chaining via `naiveRun_add`. -/
+    Proof structure (chains the three lemmas added in `Cycle.lean`):
+    1. Unpack `hloop` to get the buffer match `range` and `leapCount = none`.
+    2. Mirror `leap_correct`'s prelude: extract `m_start` from the buffer,
+       build `hone_cycle`, `hcycle_inv`, and `regRun`-level `st_m_alt`.
+    3. Combine `leapCount_none_implies_data_le` with `stateSplit_recover` and
+       the buffer's logic-state match to get `m_start ≤ st_m_alt` per prime.
+    4. Build the per-`c` `hsafe` predicate of `iterated_cycle_per_reg` from
+       `cycle_low_intermediate_implies_eq` (logic-register branch) and the
+       absolute non-negativity (data-register branch).
+    5. For any `j ≥ st.stepsSimulated`, pick `c = (j - stepsSimulated) / L
+       + 1` so that `j ≤ stepsSimulated + L * c`. Apply
+       `iterated_cycle_per_reg` to get `regRun` succeeding at `L * (c + 1)`,
+       lift to `naiveRun` via `regRun_map_unfmap`, then contradict any
+       hypothetical `naiveRun ... j = none` via `naiveRun_none_of_ge`. -/
 theorem detectInfiniteLoop_sound
     (prog : FractranProg) (n : ℕ)
-    (hw : prog.WellFormed) (hn : 0 < n)
+    (hw : prog.WellFormed) (_hn : 0 < n)
     (thresh dmaxes : RegMap) (st : CycleState) (k : ℕ)
-    (_htable_consistent : thresh = dthreshMap prog.toRegProg st.buf.cap)
-    (_hdmaxes_consistent : dmaxes = dmaxesMap prog.toRegProg)
-    (_hinv : naiveRun prog n st.stepsSimulated = some (RegMap.unfmap st.m))
-    (_hwf : RegMap.WF st.m)
-    (_hbuf : BufferInvariant prog n thresh st.buf st.stepsSimulated)
-    (_hloop : detectInfiniteLoop thresh dmaxes st = some k) :
+    (hthresh : thresh = dthreshMap prog.toRegProg st.buf.cap)
+    (_hdmaxes : dmaxes = dmaxesMap prog.toRegProg)
+    (hinv : naiveRun prog n st.stepsSimulated = some (RegMap.unfmap st.m))
+    (hwf : RegMap.WF st.m)
+    (hbuf : BufferInvariant prog n thresh st.buf st.stepsSimulated)
+    (hloop : detectInfiniteLoop thresh dmaxes st = some k) :
     ∀ j, st.stepsSimulated ≤ j → naiveRun prog n j ≠ none := by
-  sorry
+  -- Step 1: Unpack hloop into st.halted = false, getRange = some range,
+  --         leapCount = none. detectInfiniteLoop wraps an `if`, then a `let`
+  --         that hides a nested `match`; we destructure manually because
+  --         `split_ifs` doesn't peel through the `let`.
+  obtain ⟨range, hnh, hgr, hlc⟩ : ∃ range,
+      st.halted = false ∧
+      st.buf.getRange Prod.snd (stateSplit thresh st.m).snd = some range ∧
+      leapCount dmaxes
+        ((stateSplit thresh st.m).fst :: range.dropLast.map Prod.fst)
+        (range.getLast!).fst (stateSplit thresh st.m).fst = none := by
+    rw [detectInfiniteLoop_unfold] at hloop
+    cases hh : st.halted
+    · -- st.halted = false
+      simp only [hh, Bool.false_eq_true, ↓reduceIte] at hloop
+      cases hgr : st.buf.getRange Prod.snd (stateSplit thresh st.m).snd
+      · rw [hgr] at hloop; simp at hloop
+      · rename_i range
+        rw [hgr] at hloop
+        simp only at hloop  -- iota-reduce `match some range`
+        cases hlc : leapCount dmaxes
+            ((stateSplit thresh st.m).fst :: range.dropLast.map Prod.fst)
+            (range.getLast!).fst (stateSplit thresh st.m).fst
+        · exact ⟨range, rfl, rfl, hlc⟩
+        · rw [hlc] at hloop; simp at hloop
+    · -- st.halted = true
+      simp [hh] at hloop
+  clear hloop  -- already extracted what we need
+  -- Step 2: Extract m_start from buffer (mirror leap_correct prelude).
+  set L := range.length with hL_def
+  have hLpos : 0 < L :=
+    CBuf.getRange_length_pos st.buf Prod.snd (stateSplit thresh st.m).snd range hgr
+  obtain ⟨_hbuf_len, hentries⟩ := hbuf
+  have hgr' := hgr
+  simp only [CBuf.getRange, Option.map_eq_some_iff] at hgr'
+  obtain ⟨idx, hfind, hrange_eq⟩ := hgr'
+  have hidx := (List.findIdx?_eq_some_iff_getElem.mp hfind).1
+  have hL_eq : L = idx + 1 := by
+    change range.length = idx + 1
+    rw [← hrange_eq, List.length_take]; omega
+  obtain ⟨m_start, hstart_split, hstart_run, hstart_wf⟩ := hentries idx hidx
+  have hstep_eq : st.stepsSimulated - 1 - idx = st.stepsSimulated - L := by omega
+  rw [hstep_eq] at hstart_run
+  have hrange_len_le : range.length ≤ st.buf.toList.length := by
+    rw [← hrange_eq, List.length_take]; exact Nat.min_le_right _ _
+  have hL_le_steps : L ≤ st.stepsSimulated := by
+    show range.length ≤ st.stepsSimulated; omega
+  have hL_cap : L ≤ st.buf.cap := by
+    have h2 : st.buf.toList.length ≤ st.buf.cap := by
+      rw [CBuf.toList_length]; exact st.buf.hBufSize
+    show range.length ≤ st.buf.cap; omega
+  -- Step 2 (cont): logic state match → CycleInvariant.
+  have hfind_pred := (List.findIdx?_eq_some_iff_getElem.mp hfind).2.1
+  rw [hstart_split] at hfind_pred
+  have hlogic_toList : (stateSplit thresh m_start).snd.toList =
+      (stateSplit thresh st.m).snd.toList := by
+    change ((stateSplit thresh m_start).snd.toList ==
+           (stateSplit thresh st.m).snd.toList) = true at hfind_pred
+    exact beq_iff_eq.mp hfind_pred
+  have hlogic_match : ∀ p, (stateSplit thresh m_start).snd.getD p 0 =
+      (stateSplit thresh st.m).snd.getD p 0 :=
+    fun p => getD_eq_of_toList_eq _ _ hlogic_toList p 0
+  have hthresh_eq : ∀ p, thresh.getD p 0 =
+      st.buf.cap * maxDenom prog.toRegProg p := by
+    intro p; rw [hthresh]; exact dthreshMap_spec prog.toRegProg st.buf.cap p
+  have hcycle_inv : CycleInvariant prog.toRegProg st.buf.cap m_start st.m :=
+    stateSplit_implies_cycleInvariant prog.toRegProg st.buf.cap thresh
+      m_start st.m hthresh_eq hlogic_match
+  -- Step 2 (cont): naiveRun and regRun versions of "one cycle from m_start".
+  have hone_cycle : naiveRun prog (RegMap.unfmap m_start) L =
+      some (RegMap.unfmap st.m) := by
+    have h := naiveRun_add prog n (st.stepsSimulated - L) L
+    rw [show st.stepsSimulated - L + L = st.stepsSimulated from by omega] at h
+    rw [h, hstart_run] at hinv
+    simpa [Option.bind] using hinv
+  obtain ⟨st_m_alt, hreg_one, hwf_st_m_alt, hgetD_alt⟩ :
+      ∃ m', regRun prog.toRegProg m_start L = some m' ∧ m'.WF ∧
+            ∀ p, m'.getD p 0 = st.m.getD p 0 := by
+    have h := regRun_map_unfmap prog m_start hstart_wf L hw
+    rw [hone_cycle] at h
+    cases hr : regRun prog.toRegProg m_start L with
+    | none => rw [hr] at h; simp only [Option.map_none, reduceCtorEq] at h
+    | some m' =>
+      rw [hr] at h
+      simp only [Option.map_some, Option.some.injEq] at h
+      have hwf_m' := regRun_wf prog m_start hstart_wf hw L m' hr
+      exact ⟨m', rfl, hwf_m', RegMap.getD_eq_of_unfmap_eq m' st.m hwf_m' hwf h⟩
+  -- Transfer CycleInvariant to st_m_alt (same getD per prime).
+  have hcycle_inv_alt : CycleInvariant prog.toRegProg st.buf.cap m_start st_m_alt := by
+    intro p
+    have hg : st_m_alt.getD p 0 = st.m.getD p 0 := hgetD_alt p
+    rcases hcycle_inv p with heq | ⟨h₁, h₂⟩
+    · left; rw [hg]; exact heq
+    · right; refine ⟨h₁, ?_⟩; rw [hg]; exact h₂
+  -- range.getLast! = stateSplit thresh m_start (the matching buffer entry).
+  have hrange_getLast! : range.getLast! = stateSplit thresh m_start := by
+    conv_lhs =>
+      rw [show range = st.buf.toList.take (idx + 1) from hrange_eq.symm]
+    simp only [List.getLast!_eq_getLast?_getD]
+    rw [List.getLast?_take]
+    rw [if_neg (by omega)]
+    rw [show idx + 1 - 1 = idx from by omega,
+        List.getElem?_eq_getElem hidx, Option.some_or, Option.getD_some]
+    exact hstart_split
+  -- Step 3: Absolute delta is non-negative for every prime (combining
+  --         leapCount_none_implies_data_le, stateSplit_recover, and the
+  --         buffer's logic-state match).
+  have habs_le : ∀ p, m_start.getD p 0 ≤ st_m_alt.getD p 0 := by
+    intro p
+    have hdata_le := leapCount_none_implies_data_le dmaxes
+      ((stateSplit thresh st.m).fst :: range.dropLast.map Prod.fst)
+      (range.getLast!).fst (stateSplit thresh st.m).fst hlc p
+    rw [hrange_getLast!] at hdata_le
+    have hs_decomp : m_start.getD p 0 =
+        (stateSplit thresh m_start).fst.getD p 0 +
+        (stateSplit thresh m_start).snd.getD p 0 := by
+      have hrec := stateSplit_recover thresh m_start p
+      simp only [] at hrec
+      rw [RegMap.mul_getD] at hrec; linarith
+    have he_decomp : st.m.getD p 0 =
+        (stateSplit thresh st.m).fst.getD p 0 +
+        (stateSplit thresh st.m).snd.getD p 0 := by
+      have hrec := stateSplit_recover thresh st.m p
+      simp only [] at hrec
+      rw [RegMap.mul_getD] at hrec; linarith
+    have hlg := hlogic_match p
+    have hga := hgetD_alt p
+    omega
+  -- Step 4: Build hsafe for any c.
+  have hsafe_for : ∀ (c : ℕ), ∀ i, i < L → ∀ m_i, RegMap.WF m_i →
+      regRun prog.toRegProg m_start i = some m_i →
+      ∀ p, (m_i.getD p 0 < maxDenom prog.toRegProg p →
+              (c : ℤ) * ((st_m_alt.getD p 0 : ℤ) - (m_start.getD p 0 : ℤ)) = 0) ∧
+           (m_i.getD p 0 ≥ maxDenom prog.toRegProg p →
+              (m_i.getD p 0 : ℤ) +
+                (c : ℤ) * ((st_m_alt.getD p 0 : ℤ) - (m_start.getD p 0 : ℤ)) ≥
+              maxDenom prog.toRegProg p) := by
+    intro c i hi m_i _hwf_mi hrun_mi p
+    refine ⟨?_, ?_⟩
+    · intro hp_low
+      have heq : m_start.getD p 0 = st_m_alt.getD p 0 :=
+        cycle_low_intermediate_implies_eq prog hw st.buf.cap L hLpos hL_cap
+          m_start st_m_alt hstart_wf hreg_one hcycle_inv_alt
+          i hi m_i hrun_mi p hp_low
+      have : (st_m_alt.getD p 0 : ℤ) - (m_start.getD p 0 : ℤ) = 0 := by
+        rw [heq]; ring
+      rw [this]; ring
+    · intro hp_high
+      have hdelta_nonneg : (0 : ℤ) ≤
+          (st_m_alt.getD p 0 : ℤ) - (m_start.getD p 0 : ℤ) := by
+        have := habs_le p; omega
+      have hc_nonneg : (0 : ℤ) ≤ (c : ℤ) := by positivity
+      have hcmul_nonneg : (0 : ℤ) ≤
+          (c : ℤ) * ((st_m_alt.getD p 0 : ℤ) - (m_start.getD p 0 : ℤ)) :=
+        mul_nonneg hc_nonneg hdelta_nonneg
+      have : (maxDenom prog.toRegProg p : ℤ) ≤ (m_i.getD p 0 : ℤ) := by
+        exact_mod_cast hp_high
+      linarith
+  -- Step 5: For any j ≥ st.stepsSimulated, naiveRun cannot be none.
+  intro j hj hjnone
+  -- Pick c large enough that j ≤ st.stepsSimulated + L * c.
+  set c := (j - st.stepsSimulated) / L + 1 with hc_def
+  have hj_bound : j ≤ st.stepsSimulated + L * c := by
+    have hmod : (j - st.stepsSimulated) % L < L := Nat.mod_lt _ hLpos
+    have hdiv_eq := Nat.div_add_mod (j - st.stepsSimulated) L
+    have : (j - st.stepsSimulated) < L * c := by
+      rw [hc_def, Nat.mul_add, Nat.mul_one]; omega
+    omega
+  -- Apply iterated_cycle_per_reg to get regRun for L * (c + 1) steps.
+  obtain ⟨m_final, hreg_final, _hwf_final, _hdiff_final⟩ :=
+    iterated_cycle_per_reg prog hw m_start st_m_alt L hstart_wf hwf_st_m_alt
+      hreg_one c (hsafe_for c)
+  -- Lift to naiveRun.
+  have hnaive_final : naiveRun prog (RegMap.unfmap m_start) (L * (c + 1)) =
+      some (RegMap.unfmap m_final) := by
+    have h := regRun_map_unfmap prog m_start hstart_wf (L * (c + 1)) hw
+    rw [hreg_final] at h; simpa using h.symm
+  have hbig : naiveRun prog n (st.stepsSimulated - L + L * (c + 1)) =
+      some (RegMap.unfmap m_final) := by
+    have h := naiveRun_add prog n (st.stepsSimulated - L) (L * (c + 1))
+    rw [hstart_run] at h
+    change naiveRun prog n (st.stepsSimulated - L + L * (c + 1)) =
+      naiveRun prog (RegMap.unfmap m_start) (L * (c + 1)) at h
+    rw [h]; exact hnaive_final
+  have hsimplify : st.stepsSimulated - L + L * (c + 1) = st.stepsSimulated + L * c := by
+    rw [Nat.mul_add, Nat.mul_one]; omega
+  rw [hsimplify] at hbig
+  -- Contradiction: naiveRun n j = none implies naiveRun n (stepsSimulated + L*c) = none.
+  have hnone_big := naiveRun_none_of_ge prog n hj_bound hjnone
+  rw [hbig] at hnone_big
+  exact Option.some_ne_none _ hnone_big
 
 /-- **`runWithLimit` preserves the `naiveRun` invariant.**
 

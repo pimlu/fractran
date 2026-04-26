@@ -1866,6 +1866,241 @@ theorem iterated_cycle_per_reg
       push_cast at hd_next hd_m_c ⊢
       linarith
 
+/-- **Logic registers have zero cycle delta.** If some intermediate state
+    `m_i` (reached after `i < L` steps from `m_start`) has register `p`
+    sitting in logic territory (`< maxDenom`), then the cycle doesn't change
+    `p` at all: `m_start.getD p 0 = m_end.getD p 0`.
+
+    Used to discharge the `m_i < maxDenom → c * delta = 0` hypothesis of
+    `iterated_cycle_per_reg` for the unbounded-leap case (where every data
+    register has `delta ≥ 0`, but logic registers must have `delta = 0`
+    since their values were never bumped above threshold).
+
+    Proof: `cycle_properties` (applied at step `i` with margin `cyclen`)
+    gives a parallel trajectory from `m_end` reaching some `m_i_alt`,
+    with the per-register difference preserved (`m_i - m_i_alt = m_start
+    - m_end`) and `CycleInvariant prog (cyclen - i) m_i m_i_alt`. The
+    cycle invariant's "data" branch requires `m_i ≥ (cyclen - i) *
+    maxDenom ≥ maxDenom`, contradicting `m_i < maxDenom`. So branch (a)
+    holds: `m_i = m_i_alt` at `p`, hence `m_start = m_end` at `p`. -/
+theorem cycle_low_intermediate_implies_eq
+    (prog : FractranProg) (_hw : prog.WellFormed)
+    (cyclen L : ℕ) (_hLpos : 0 < L) (hLcyclen : L ≤ cyclen)
+    (m_start m_end : RegMap)
+    (_hwf_start : m_start.WF)
+    (_hone : regRun prog.toRegProg m_start L = some m_end)
+    (hinv : CycleInvariant prog.toRegProg cyclen m_start m_end)
+    (i : ℕ) (hi : i < L) (m_i : RegMap)
+    (hrun_i : regRun prog.toRegProg m_start i = some m_i)
+    (p : ℕ) (hp : m_i.getD p 0 < maxDenom prog.toRegProg p) :
+    m_start.getD p 0 = m_end.getD p 0 := by
+  -- Step 1: Translate regRun to elimRunAux on the standard candidate list.
+  have hinv_init : ElimInvariant prog.toRegProg (allCandidates prog.toRegProg) m_start :=
+    allCandidates_invariant prog.toRegProg m_start
+  obtain ⟨hspec_i, _⟩ := elimRunAux_spec prog.toRegProg i m_start
+    (allCandidates prog.toRegProg) hinv_init
+  rw [hrun_i] at hspec_i
+  rw [Option.map_eq_some_iff] at hspec_i
+  obtain ⟨⟨m_i', cands_i⟩, hrun_i_elim, heq⟩ := hspec_i
+  simp only at heq
+  subst heq
+  -- Step 2: Get the parallel trajectory from m_end.
+  have hcands := allCandidates_mem_prog prog.toRegProg
+  have hnodup := allCandidates_nodup_snd prog.toRegProg
+  have hwf := candidatesWF_optTable prog.toRegProg
+  have himargin : i + 1 ≤ cyclen := by omega
+  obtain ⟨m_i_alt, cands_alt, hrun_alt⟩ := elimRunAux_succeeds_of_cycleInvariant
+    prog.toRegProg (optTable prog.toRegProg) (allCandidates prog.toRegProg)
+    (allCandidates prog.toRegProg) m_start m_end
+    hcands hnodup hwf i cyclen himargin hinv m_i' cands_i hrun_i_elim
+  -- Step 3: Apply cycle_properties to get difference preservation +
+  -- continued cycle invariant.
+  obtain ⟨_, hdiff, hinv_i⟩ := cycle_properties prog.toRegProg
+    (optTable prog.toRegProg) (allCandidates prog.toRegProg)
+    (allCandidates prog.toRegProg) m_start m_end
+    hcands hnodup hwf i cyclen himargin hinv
+    m_i' m_i_alt cands_i cands_alt hrun_i_elim hrun_alt
+  -- Step 4: Use the invariant + hp to force m_i' = m_i_alt at p.
+  have hd := hdiff p
+  rcases hinv_i p with heq_p | ⟨h_lo, _⟩
+  · -- m_i' = m_i_alt at p: difference is zero, so m_start = m_end at p
+    have : (m_start.getD p 0 : ℤ) = (m_end.getD p 0 : ℤ) := by
+      have hzero : (m_i'.getD p 0 : ℤ) - (m_i_alt.getD p 0 : ℤ) = 0 := by
+        rw [heq_p]; ring
+      omega
+    exact_mod_cast this
+  · -- Both ≥ (cyclen - i) * maxDenom; combined with hp, contradiction.
+    -- (cyclen - i) ≥ 1 since i < L ≤ cyclen.
+    have hci_pos : 1 ≤ cyclen - i := by omega
+    have hge : maxDenom prog.toRegProg p ≤ (cyclen - i) * maxDenom prog.toRegProg p := by
+      exact Nat.le_mul_of_pos_left _ hci_pos
+    omega
+
+/-- **`leapCount = none` ⟹ data-component delta is non-negative for every
+    prime.** When the cycle has no finite-life data register, every register's
+    data part either is constant across the cycle (`s = e`) or strictly
+    increases (`e > s`). Either way `startData.getD p 0 ≤ endData.getD p 0`.
+
+    For primes not in `keys` (i.e., absent from both `startData` and
+    `endData`), both data values are `0`, giving `≤` trivially.
+
+    Used to establish "every register's absolute delta is `≥ 0`" in
+    `detectInfiniteLoop_sound` (after combining with the buffer's
+    logic-state match). -/
+theorem leapCount_none_implies_data_le
+    (thresh : RegMap) (history : List RegMap)
+    (startData endData : RegMap)
+    (hnone : leapCount thresh history startData endData = none)
+    (p : ℕ) :
+    startData.getD p 0 ≤ endData.getD p 0 := by
+  set keys := ((startData.foldl (fun acc q _ => acc.insert q 0) endData).toList.map Prod.fst)
+    with hkeys_def
+  set lives := keys.filterMap (fun q => life thresh history
+    (startData.foldl (fun acc k v => acc.insert k v) (∅ : RegMap))
+    (endData.foldl (fun acc k v => acc.insert k v) (∅ : RegMap)) q) with hlives_def
+  -- leapCount = none ⟺ lives = []
+  have hlives_empty : lives = [] := by
+    cases hl : lives with
+    | nil => rfl
+    | cons hd tl =>
+      exfalso
+      change (match lives with | [] => none | l => some (l.foldl min l.head!)) = none at hnone
+      rw [hl] at hnone
+      simp at hnone
+  by_cases hp : p ∈ keys
+  · -- p ∈ keys → life p = none
+    have hsd_eq : (startData.foldl (fun acc k v => acc.insert k v) (∅ : RegMap)).getD p 0 =
+        startData.getD p 0 := foldl_insert_copy_getD startData p
+    have hed_eq : (endData.foldl (fun acc k v => acc.insert k v) (∅ : RegMap)).getD p 0 =
+        endData.getD p 0 := foldl_insert_copy_getD endData p
+    have hlife_p : life thresh history
+        (startData.foldl (fun acc k v => acc.insert k v) (∅ : RegMap))
+        (endData.foldl (fun acc k v => acc.insert k v) (∅ : RegMap)) p =
+        (if startData.getD p 0 = endData.getD p 0 then none
+         else if margin thresh history p < 0 then some 0
+         else if endData.getD p 0 > startData.getD p 0 then none
+         else some ((margin thresh history p).toNat /
+                    (startData.getD p 0 - endData.getD p 0))) := by
+      unfold life; simp only [hsd_eq, hed_eq]
+    have hlife_none : life thresh history
+        (startData.foldl (fun acc k v => acc.insert k v) (∅ : RegMap))
+        (endData.foldl (fun acc k v => acc.insert k v) (∅ : RegMap)) p = none := by
+      cases hl : life thresh history
+          (startData.foldl (fun acc k v => acc.insert k v) (∅ : RegMap))
+          (endData.foldl (fun acc k v => acc.insert k v) (∅ : RegMap)) p with
+      | none => rfl
+      | some k =>
+        exfalso
+        have hk_in : k ∈ lives := by
+          rw [hlives_def]
+          exact List.mem_filterMap.mpr ⟨p, hp, hl⟩
+        rw [hlives_empty] at hk_in
+        exact List.not_mem_nil hk_in
+    rw [hlife_p] at hlife_none
+    -- Case-analyse the conditions
+    by_cases h1 : startData.getD p 0 = endData.getD p 0
+    · omega
+    · simp only [if_neg h1] at hlife_none
+      by_cases h2 : margin thresh history p < 0
+      · simp only [if_pos h2] at hlife_none
+        exact absurd hlife_none (by simp)
+      · simp only [if_neg h2] at hlife_none
+        by_cases h3 : endData.getD p 0 > startData.getD p 0
+        · omega
+        · simp only [if_neg h3] at hlife_none
+          exact absurd hlife_none (by simp)
+  · -- p ∉ keys: both startData and endData lack p, so both getD return 0
+    have hp_notmem : p ∉ startData.foldl (fun acc q _ => acc.insert q 0) endData := by
+      intro hin
+      apply hp
+      rw [hkeys_def, Std.TreeMap.map_fst_toList_eq_keys]
+      exact Std.TreeMap.mem_keys.mpr hin
+    rw [Std.TreeMap.foldl_eq_foldl_toList] at hp_notmem
+    have hp_not_endData : p ∉ endData := fun h =>
+      hp_notmem (mem_list_foldl_insert _ _ _ (Or.inl h))
+    have hp_not_startData : p ∉ startData := fun h =>
+      hp_notmem (mem_list_foldl_insert _ _ _ (Or.inr (by
+        rw [Std.TreeMap.map_fst_toList_eq_keys]; exact Std.TreeMap.mem_keys.mpr h)))
+    rw [Std.TreeMap.getD_eq_fallback hp_not_startData,
+        Std.TreeMap.getD_eq_fallback hp_not_endData]
+
+/-- **`hsafe` discharge for the unbounded-leap case.** When `leapCount` returns
+    `none` (every data register has either `delta = 0` or `delta > 0` with safe
+    margin), the per-register safety hypothesis of `iterated_cycle_per_reg`
+    holds for *any* repetition count `c`. This is the bridge that converts
+    "infinite-loop detected" into "we may iterate the cycle arbitrarily many
+    times without `regRun` ever failing."
+
+    The two conjuncts:
+    - `m_i < maxDenom → c * delta = 0`: by `cycle_low_intermediate_implies_eq`,
+      register `p` (which dips into logic at step `i`) has identical absolute
+      value at the cycle's start and end, so `delta = 0`.
+    - `m_i ≥ maxDenom → m_i + c * delta ≥ maxDenom`: combine
+      `leapCount_none_implies_data_le` with the buffer logic-state match (via
+      `stateSplit_recover`) to get absolute `delta ≥ 0`, then `c * delta ≥ 0`,
+      so adding it to `m_i ≥ maxDenom` keeps the bound. -/
+theorem leapCount_none_hsafe_for_iterated_cycle
+    (prog : FractranProg) (hw : prog.WellFormed)
+    (cyclen L : ℕ) (hLpos : 0 < L) (hLcyclen : L ≤ cyclen)
+    (thresh dmaxes : RegMap) (history : List RegMap)
+    (m_start m_end : RegMap)
+    (hwf_start : m_start.WF)
+    (hone : regRun prog.toRegProg m_start L = some m_end)
+    (hinv : CycleInvariant prog.toRegProg cyclen m_start m_end)
+    (hlogic_match : ∀ p, (stateSplit thresh m_start).snd.getD p 0 =
+                          (stateSplit thresh m_end).snd.getD p 0)
+    (hnone : leapCount dmaxes history
+              (stateSplit thresh m_start).fst (stateSplit thresh m_end).fst = none)
+    (c : ℕ) :
+    ∀ i, i < L → ∀ m_i, RegMap.WF m_i →
+      regRun prog.toRegProg m_start i = some m_i →
+      ∀ p, (m_i.getD p 0 < maxDenom prog.toRegProg p →
+              (c : ℤ) * ((m_end.getD p 0 : ℤ) - (m_start.getD p 0 : ℤ)) = 0) ∧
+           (m_i.getD p 0 ≥ maxDenom prog.toRegProg p →
+              (m_i.getD p 0 : ℤ) +
+                (c : ℤ) * ((m_end.getD p 0 : ℤ) - (m_start.getD p 0 : ℤ)) ≥
+              maxDenom prog.toRegProg p) := by
+  -- Establish absolute delta is non-negative for every prime, by combining
+  -- the data-component bound with the logic-state match via stateSplit_recover.
+  have habs_le : ∀ p, m_start.getD p 0 ≤ m_end.getD p 0 := by
+    intro p
+    have hdata_le := leapCount_none_implies_data_le dmaxes history
+      (stateSplit thresh m_start).fst (stateSplit thresh m_end).fst hnone p
+    have hs_decomp : m_start.getD p 0 =
+        (stateSplit thresh m_start).fst.getD p 0 +
+        (stateSplit thresh m_start).snd.getD p 0 := by
+      have hrec := stateSplit_recover thresh m_start p
+      simp only [] at hrec
+      rw [RegMap.mul_getD] at hrec; linarith
+    have he_decomp : m_end.getD p 0 =
+        (stateSplit thresh m_end).fst.getD p 0 +
+        (stateSplit thresh m_end).snd.getD p 0 := by
+      have hrec := stateSplit_recover thresh m_end p
+      simp only [] at hrec
+      rw [RegMap.mul_getD] at hrec; linarith
+    have hlg := hlogic_match p
+    omega
+  intro i hi m_i _hwf_mi hrun_mi p
+  refine ⟨?_, ?_⟩
+  · -- Logic register at step i: by cycle_low_intermediate_implies_eq, delta = 0
+    intro hp_low
+    have heq : m_start.getD p 0 = m_end.getD p 0 :=
+      cycle_low_intermediate_implies_eq prog hw cyclen L hLpos hLcyclen
+        m_start m_end hwf_start hone hinv i hi m_i hrun_mi p hp_low
+    have hdelta_zero : (m_end.getD p 0 : ℤ) - (m_start.getD p 0 : ℤ) = 0 := by
+      rw [heq]; ring
+    rw [hdelta_zero]; ring
+  · -- Data register at step i: c * (nonneg) ≥ 0, plus m_i ≥ maxDenom
+    intro hp_high
+    have hdelta_nonneg : (0 : ℤ) ≤ (m_end.getD p 0 : ℤ) - (m_start.getD p 0 : ℤ) := by
+      have := habs_le p; omega
+    have hcmul_nonneg : (0 : ℤ) ≤
+        (c : ℤ) * ((m_end.getD p 0 : ℤ) - (m_start.getD p 0 : ℤ)) :=
+      mul_nonneg (Int.natCast_nonneg _) hdelta_nonneg
+    have hp_high_int : (maxDenom prog.toRegProg p : ℤ) ≤ (m_i.getD p 0 : ℤ) := by
+      exact_mod_cast hp_high
+    linarith
+
 
 /-- `leapState` per-register specification. The result at register `p` is
     the data part (advanced by `c` cycles) plus the logic part. -/
