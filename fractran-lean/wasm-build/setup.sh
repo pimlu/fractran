@@ -56,6 +56,11 @@ if [[ -z "$LEAN_TAG" || "$LEAN_TAG" == "$TOOLCHAIN" ]]; then
   exit 1
 fi
 
+# ---- libuv version (sourced from lean4's CMakeLists.txt) --------------------
+
+# Sync this with lean4's pinned version. lean4 v4.30.0-rc2 uses v1.48.0.
+LIBUV_TAG="${LIBUV_TAG:-v1.48.0}"
+
 # ---- GMP version + PGP signing key -------------------------------------------
 
 GMP_VERSION="${GMP_VERSION:-6.3.0}"
@@ -86,6 +91,20 @@ else
   mkdir -p "$DEPS_DIR"
   git clone --depth 1 --branch "$LEAN_TAG" \
     https://github.com/leanprover/lean4.git "$LEAN_SRC"
+fi
+
+# ---- Clone libuv -------------------------------------------------------------
+
+LIBUV_SRC="$DEPS_DIR/libuv"
+
+if [[ -d "$LIBUV_SRC/.git" ]]; then
+  echo "==> $LIBUV_SRC already exists; skipping clone."
+  echo "    (To re-clone: rm -rf $LIBUV_SRC)"
+else
+  echo "==> Cloning libuv/libuv at $LIBUV_TAG into $LIBUV_SRC"
+  mkdir -p "$DEPS_DIR"
+  git clone --depth 1 --branch "$LIBUV_TAG" \
+    https://github.com/libuv/libuv.git "$LIBUV_SRC"
 fi
 
 # ---- Download GMP ------------------------------------------------------------
@@ -124,13 +143,21 @@ else
   curl -fL -O "$GMP_SIG_URL"
 
   echo "==> Verifying PGP signature"
-  if ! gpg --batch --verify "$GMP_SIG" "$GMP_TARBALL" 2>&1 | tee /tmp/gmp-verify.log | grep -q "Good signature"; then
+  # Capture gpg output. gpg returns non-zero if the signing key has expired
+  # since the signature was made, even when the signature itself is good — so
+  # we look at the message text rather than the exit code.
+  verify_output="$(gpg --batch --verify "$GMP_SIG" "$GMP_TARBALL" 2>&1 || true)"
+  if ! echo "$verify_output" | grep -q "Good signature"; then
     echo "ERROR: PGP verification failed for $GMP_TARBALL" >&2
-    cat /tmp/gmp-verify.log >&2
+    echo "$verify_output" >&2
     rm -f "$GMP_TARBALL" "$GMP_SIG"
     exit 1
   fi
-  echo "    OK"
+  if echo "$verify_output" | grep -q "expired"; then
+    echo "    OK (signing key has since expired; signature was made while valid)"
+  else
+    echo "    OK"
+  fi
 
   echo "==> Extracting $GMP_TARBALL"
   tar -xf "$GMP_TARBALL"

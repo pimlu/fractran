@@ -79,32 +79,82 @@ The `cyclen` parameter to `cycles` is the circular buffer capacity — larger va
 
 Lean 4 project using mathlib (v4.30.0-rc2). Build with `cd fractran-lean && lake build`.
 
+The Lean side mirrors the Haskell implementation: it has the naive interpreter, the register-based interpreter, the static fraction-elimination optimization, and the cycle-detecting interpreter with arithmetic leaping. All four satisfy a single uniform correctness predicate (`Correct`).
+
 ### Correctness framework
 
-A FRACTRAN program is `List (ℕ × ℕ)` (numerator, denominator pairs). The reference semantics are:
+A FRACTRAN program is `List (ℕ × ℕ)` (numerator, denominator pairs). Reference semantics:
 
-- **`naiveStep`** (`Basic.lean`): scans for the first fraction `(p, q)` where `q ∣ n`, returning `n / q * p`. Returns `none` if no fraction applies (halt).
-- **`naiveRun`** (`Basic.lean`): iterates `naiveStep` for `k` steps. Returns `some m` if still running, `none` if halted.
+- **`naiveStep`** (`Runtime/Basic.lean`): scans for the first fraction `(p, q)` where `q ∣ n`, returning `n / q * p`. Returns `none` if no fraction applies (halt).
+- **`naiveRun`** (`Runtime/Basic.lean`): iterates `naiveStep` for `k` steps. Returns `some m` if still running, `none` if halted.
 - **`WellFormed`** (`Basic.lean`): all numerators and denominators are positive.
-- **`Correct`** (`Basic.lean`): any interpreter `interp prog n k → (Option ℕ, ℕ)` is correct if it returns `(result, j)` with `j ≥ k` and `naiveRun prog n j = result`. This handles both halting and cycle-detection interpreters uniformly.
+- **`Correct`** (`Basic.lean`): any interpreter `interp prog n k → (Option ℕ × ℕ)` is correct if it returns `(result, j)` with `j ≥ k` and `naiveRun prog n j = result`. This handles both halting and cycle-detection interpreters uniformly.
+
+### Runtime / proof split
+
+Each Lean module is split in two:
+- `Fractran/Runtime/X.lean` — data types, computational definitions, runners. Imports only `Std` and `Init` (no mathlib). These are the modules whose Lake-generated C output ships in the WASM build.
+- `Fractran/X.lean` — proofs and predicates that need mathlib (`Finsupp`, `Nat.factorization`, etc.). Imports the runtime side and adds theorems on top of it.
+
+The split exists so the WASM build can compile only the runtime modules — every `Runtime/*.olean` has zero mathlib in its `importArts`. The native build still pulls in everything for the full proofs.
+
+Layout:
+
+```
+Fractran/
+  Runtime/Basic.lean        # FractranProg, naiveStep, naiveRun
+  Runtime/Register.lean     # RegMap (= Std.TreeMap ℕ ℕ), Mul/Div/applicable, regStep/Run
+  Runtime/CBuf.lean         # circular buffer
+  Runtime/Elim.lean         # optTable, elimStep — static fraction elimination
+  Runtime/Cycle.lean        # cycleStep, cycleRunFromRegProg, leapState, dthreshMap
+  Basic.lean, Register.lean, CBuf.lean, Elim.lean, Cycle.lean   # proofs
+```
 
 ### What's proven
 
-**Register interpreter** (`Register.lean`): `RegMap` is `Std.TreeMap ℕ ℕ` mapping primes to exponents. Key results:
-- `facmap`/`unfmap` round-trip: `unfmap (facmap n) = n` for `n > 0`
-- Homomorphisms: `unfmap (m₁ * m₂) = unfmap m₁ * unfmap m₂`, `unfmap (m / den) = unfmap m / unfmap den` (when applicable)
-- `applicable den m ↔ unfmap den ∣ unfmap m` for well-formed maps
-- **`regRun_correct`**: the register interpreter satisfies `Correct`
+**Register interpreter** (`Register.lean`): `RegMap = Std.TreeMap ℕ ℕ`. Key results:
+- `facmap`/`unfmap` round-trip: `unfmap (facmap n) = n` for `n > 0`.
+- Homomorphisms: `unfmap (m₁ * m₂) = unfmap m₁ * unfmap m₂`, `unfmap (m / den) = unfmap m / unfmap den` (when applicable).
+- `applicable den m ↔ unfmap den ∣ unfmap m` for well-formed maps.
+- **`regRun_correct`**: the register interpreter satisfies `Correct`.
 
 The proof strategy bridges computation (`TreeMap`) and reasoning (`Finsupp`/`Nat.factorization`) via `toFinsupp`.
 
-### Future work — two optimizations to formalize
+**Static fraction elimination** (`Elim.lean`): `optTable` precomputes, per fraction index, which fractions can fire next. `ElimInvariant` says the candidate list is a sublist of all candidates and every omitted entry is currently inapplicable. Theorems show:
+- `elimStep_eq_regStep` under the invariant.
+- `optTable_preserves_invariant` after a step.
+- **`elimRun_correct`**: the elimination interpreter satisfies `Correct`.
 
-The goal is to formalize the two algorithmic innovations from the Haskell implementation and prove them `Correct` against `naiveRun`.
+**Cycle detection with arithmetic leaping** (`Cycle.lean`): Partition registers into *logic* (`exp ≤ thresh`) and *data* (`exp > thresh`) where `thresh = cyclen * max_denominator` per prime. The proof has three layers:
+1. `data_irrelevant`: changing data registers can't change which fraction fires (Lemma 1 in the paper).
+2. `cycle_properties` / `cycle_same_fracs`: if two states share their logic component and the cycle invariant holds, the same fraction sequence fires for the configured number of cycle repetitions (Theorem 2).
+3. `leap_correct` + `cycleRunAux_correct` + **`cycleRun_correct`**: the cycle-detecting interpreter satisfies `Correct`.
 
-**1. Static fraction elimination** (Haskell: `optArr`, `fracOpt` in `Fractran.hs`): After fraction `j` fires, precompute which earlier fractions `k < j` can possibly fire next. Fraction `k` is skipped if its denominator shares no prime with `j`'s numerator (if `j` fired, it added those primes, so `k`'s denominator test could not have newly become satisfiable). This is a per-step optimization that reduces the fraction scan from O(l) toward O(1).
+`cycleRunFromRegProg` is the runtime-callable entry: takes a pre-factored program (`List (RegMap × RegMap)`) and a starting `RegMap`, returns a `CycleState`. The `Nat`-keyed wrapper `cycleRunNat` lives on the proof side because it uses `RegMap.facmap` (which uses `Nat.primeFactorsList` from mathlib).
 
-**2. Cycle detection with arithmetic leaping** (Haskell: `cycles`, `leap`, `stateSplit` in `Fractran.hs`): Partition registers into *logic* (small exponents that affect control flow) and *data* (large exponents that cannot). When the logic state repeats, compute how many full cycles can be safely skipped before any data register drops into logic territory, then advance the state arithmetically. This is the main speedup (30x+ on benchmarks). Key components:
-- `stateSplit`: partition state by threshold `dthresh = cyclen * max_denominator` per prime
-- `CBuf`: circular buffer with set-backed membership for detecting logic-state repeats
-- `leap`: given a repeated logic state, compute the number of safe cycle repetitions and the resulting state
+### Demos
+
+`Main.lean` (proof-side, target `fractran-demo`) runs three demos — a small cycle test, Hamming weight of `2^(2^128 - 1)` (popcount = 128), and a 24-fraction self-interpreter.
+
+`MainRuntime.lean` (runtime-only, target `fractran-runtime-demo`) runs just the Hamming demo with the program pre-factored via `RegMap.ofFactors`. Its import closure has zero mathlib — it's the entry point for the WASM build.
+
+### WASM build (`fractran-lean/wasm-build/`)
+
+Compiles `fractran-runtime-demo` to `fractran.{js,wasm}` (~1.5 MB). The full reproducible flow:
+
+```sh
+cd fractran-lean/wasm-build
+source <emsdk>/emsdk_env.sh
+make setup        # clones lean4 + libuv, fetches + PGP-verifies GMP
+make build-deps   # builds libgmp, libuv, libleanrt, libInit, libStd for WASM
+make              # links the demo
+node build/fractran.js
+```
+
+Key facts:
+- We do **not** build the lean compiler. `lean4/stage0/stdlib/` ships pre-generated `.c` files for `Init` and `Std` (the bootstrap output); we feed those directly to `em++`.
+- We do **not** link `libleancpp.a` (kernel/elaborator/parser). Runtime-only modules don't need it.
+- Two patches under `wasm-build/patches/` are applied idempotently by `build-deps.sh`: a one-line addition to libuv's CMake for Emscripten, and a small `lthread::imp` stub for Lean's runtime to avoid `pthread_create` failing under emscripten without `-pthread`.
+- GMP is PGP-verified using a pinned signing key checked into `wasm-build/keys/`, in an ephemeral `GNUPGHOME` (the user's `~/.gnupg` is never touched).
+
+See `wasm-build/README.md` for the full prerequisites and configuration knobs.

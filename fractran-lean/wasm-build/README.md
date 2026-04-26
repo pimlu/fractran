@@ -1,147 +1,141 @@
 # WASM build
 
-Builds the runtime-only fractran demo (`fractran-runtime-demo`) for the browser.
-Inputs are the C files Lake generates from the `Fractran.Runtime.*` modules;
-outputs are `build/fractran.js` + `build/fractran.wasm`.
+Builds the runtime-only fractran demo (`fractran-runtime-demo`) for the browser
+or node. Outputs `build/fractran.js` + `build/fractran.wasm` (~1.5 MB total).
 
-The Lean → C step is already handled by Lake. This directory only deals with the
-C → WASM step. You'll need to build two static libraries from source first:
-the Lean runtime and GMP, both compiled to WebAssembly.
-
-## Quick check
+## End-to-end on a fresh clone
 
 ```sh
-# From wasm-build/
-make help              # see configured paths
-make c-files           # regenerate Lake's C output (also runs as part of `make`)
-make check-deps        # verify WASM-built libs exist (will fail on a fresh checkout)
-```
-
-## Prerequisites
-
-### 1. emscripten
-
-Install the [emsdk](https://emscripten.org/docs/getting_started/downloads.html)
-and activate it in your shell:
-
-```sh
+# 0. Activate emsdk and have it on PATH
 source <emsdk>/emsdk_env.sh
-which em++   # should resolve
-```
 
-### 2. Fetch sources
-
-On first checkout, fetch and pin the GMP signing key (one-time):
-
-```sh
+# 1. One-time bootstrap of the GMP signing key (only needed if
+#    keys/gmp-signing-key.asc is not already committed)
 ./keys/fetch-gmp-key.sh
 git add wasm-build/keys/gmp-signing-key.asc
 git commit -m "Pin GMP signing key"
-```
 
-Then run setup. This will work without changes on every subsequent clone of
-the repo, since the key file is committed:
-
-```sh
+# 2. Fetch source dependencies — clones lean4 (matching ../lean-toolchain)
+#    and libuv, downloads + PGP-verifies GMP
 make setup
-```
 
-`setup.sh` reads `../lean-toolchain` to learn the Lean version, clones
-`leanprover/lean4` at the matching tag into `deps/lean4/`, downloads the GMP
-tarball into `deps/gmp-<version>/`, and PGP-verifies it against the pinned
-key. The verification uses an ephemeral `GNUPGHOME` — your `~/.gnupg` is
-never touched. See `keys/README.md` for the trust model.
+# 3. Build WASM static archives — emconfigure GMP, emcmake libuv, em++
+#    libleanrt + libInit + libStd. Slow on first run (~10 min); incremental
+#    after that.
+make build-deps
 
-Override the GMP version with `GMP_VERSION=...` if you need to.
-
-### 3. Lean runtime built for WASM
-
-The Lean toolchain ships its runtime archives (`libleanrt.a`, `libInit.a`,
-`libStd.a`, `libleancpp.a`) as native binaries — unusable for WASM. Build
-from the cloned source:
-
-```sh
-cd deps/lean4
-mkdir build-wasm && cd build-wasm
-emcmake cmake .. -DCMAKE_BUILD_TYPE=Release
-emmake make -j8
-```
-
-Then point the Makefile at the built archives. Either copy them to
-`wasm-build/deps/lean-wasm/lib/` (the default) or override on the command line:
-
-```sh
-make LEAN_WASM_LIBS=$(pwd)/lib
-```
-
-> **Heads up:** the Lean runtime port to WASM is not officially supported.
-> Expect to patch CMake flags around threading/atomics, possibly disable
-> `libuv` (we don't use async I/O), and fight the C++ standard library setup.
-> Budget real time for this step.
-
-### 4. GMP built for WASM
-
-```sh
-cd deps/gmp-<version>
-emconfigure ./configure --host=none --disable-assembly \
-    --prefix=$(pwd)/../gmp-wasm
-emmake make -j8
-emmake make install
-```
-
-After this, `deps/gmp-wasm/lib/libgmp.a` and `deps/gmp-wasm/include/gmp.h` exist
-where the Makefile expects them. Or use a pre-built port like
-[gmp-wasm](https://github.com/Daninet/gmp-wasm) and override `GMP_WASM_LIB` /
-`GMP_WASM_INCLUDE`.
-
-## Running the build
-
-Once the prereqs are in place:
-
-```sh
+# 4. Compile + link the demo
 make
-# build/fractran.js + build/fractran.wasm
-```
-
-The default link produces a CLI-style WASM module. To run under Node:
-
-```sh
 node build/fractran.js
 ```
 
+Expected output of step 4:
+
+```
+--- Hamming weight of 2^(2^128 - 1) (runtime build) ---
+Input exponent of 2: 340282366920938463463374607431768211455
+Cycle length: 2, Steps simulated: 1020847100762815390390123822295304634365
+Halted: true
+Hamming weight (exponent of 13): 128
+Expected: 128
+SUCCESS!
+```
+
+The WASM binary is computing `popcount(2^128 - 1) = 128` via cycle detection
+over 10²¹ simulated FRACTRAN steps.
+
+## What gets built
+
+| Target | Source | Toolchain |
+|---|---|---|
+| `libgmp.a` (WASM) | gmp-6.3.0 source | `emconfigure` + `emmake` |
+| `libuv.a` (WASM) | libuv v1.48.0 + small lean4 patch | `emcmake` + `emmake` |
+| `libleanrt.a` (WASM) | `lean4/src/runtime/*.cpp` (24 files) | `em++` |
+| `libInit.a` (WASM) | `lean4/stage0/stdlib/Init/*.c` (~588 files) | `em++` |
+| `libStd.a` (WASM) | `lean4/stage0/stdlib/Std/*.c` (~442 files) | `em++` |
+| `fractran.{js,wasm}` | `Fractran.Runtime.*` Lake C output + above | `em++` |
+
+We do **not** build the lean compiler/parser/elaborator — `stage0/stdlib/`
+ships pre-generated `.c` files (the bootstrap output of `lean` applied to
+`Init`/`Std` source). We feed those directly to `em++`.
+
+## Trust model
+
+GMP is downloaded as a tarball from gmplib.org and PGP-verified against
+Niels Möller's signing key (fingerprint pinned in `setup.sh`,
+public key committed at `keys/gmp-signing-key.asc`). Verification uses an
+ephemeral `GNUPGHOME` — your `~/.gnupg` is never touched. See
+`keys/README.md` for the full rationale.
+
+`lean4` and `libuv` come from their official GitHub repos at pinned tags.
+
+## Patches we apply
+
+Both stored under `patches/`, applied idempotently by `build-deps.sh`:
+
+- **`libuv-emscripten.patch`** — adds `src/unix/no-proctitle.c` to libuv's
+  CMake build for Emscripten. Lifted from lean4's own `src/CMakeLists.txt`,
+  which inlines the same patch when targeting Emscripten.
+- **`lean4-emscripten-thread.patch`** — under `LEAN_EMSCRIPTEN`, makes
+  `lthread::imp` run its closure synchronously instead of calling
+  `pthread_create`. Without `-pthread`, emscripten's `pthread_create` returns
+  `ENOTSUP` and Lean's runtime throws `failed to create thread` during init.
+  Tasks (`lean_task_spawn`) would deadlock if called after this — but the
+  fractran demo doesn't use tasks.
+
+## Configuration knobs
+
+`make help` prints the resolved values. Override on the command line:
+
+| Variable | Default | What |
+|---|---|---|
+| `LEAN_PREFIX` | `$(lean --print-prefix)` | Lean toolchain include dir |
+| `LEAN_WASM_LIBS` | `deps/lean-wasm/lib` | where libleanrt/Init/Std land |
+| `GMP_WASM_LIB` / `GMP_WASM_INCLUDE` | `deps/gmp-wasm/{lib,include}` | |
+| `LIBUV_WASM_LIB` / `LIBUV_WASM_INCLUDE` | `deps/libuv-wasm/{lib,include}` | |
+| `GMP_VERSION` (setup.sh) | `6.3.0` | GMP tarball version + checksum branch |
+| `LIBUV_TAG` (setup.sh) | `v1.48.0` | libuv git tag (matches lean4) |
+
 ## Calling from the browser
 
-The default link exports just `_main`. To expose more functions (e.g.
-`cycleRunFromRegProg`), add `@[export]` attributes to the relevant Lean
-definitions in `Fractran/Runtime/Cycle.lean`, then add the C names to
-`-sEXPORTED_FUNCTIONS` in the Makefile's `LDFLAGS`. The Lean compiler
-emits one C function per exported binding.
+The default link exports just `_main`. To expose `cycleRunFromRegProg` (or
+any other Lean function) to JS:
+
+1. Add `@[export "fractran_run"] def fractran_run := cycleRunFromRegProg`
+   (or similar) in a Lean file.
+2. Add the C name to `-sEXPORTED_FUNCTIONS=['_main','_fractran_run']` in the
+   Makefile's `LDFLAGS`.
+3. Lean's compiler emits one C function per `@[export]` binding.
+4. Call from JS via `Module.ccall('fractran_run', ...)`.
 
 ## Project layout
 
 ```
 wasm-build/
-  Makefile         # build orchestration
-  README.md        # this file
-  build/           # gitignored — emit dir for .o, .wasm, .js
-  deps/            # gitignored — drop WASM-built lean4 + GMP here
+  Makefile              # link orchestration (also setup / build-deps / clean)
+  setup.sh              # clones lean4 + libuv, fetches+verifies GMP
+  build-deps.sh         # builds GMP, libuv, libleanrt, libInit, libStd for WASM
+  README.md             # this file
+  patches/
+    libuv-emscripten.patch
+    lean4-emscripten-thread.patch
+  keys/
+    fetch-gmp-key.sh    # one-time: fetch + pin the GMP signing key
+    gmp-signing-key.asc # committed public key
+    README.md           # trust model
+  build/                # gitignored — .o files + fractran.{js,wasm}
+  deps/                 # gitignored — sources + WASM-built archives
 ```
 
-## What's actually getting compiled
+## Make targets
 
 ```
-$ make help     # at the bottom, lists configured paths
+make            # link demo (default)
+make setup      # fetch sources into deps/
+make build-deps # WASM-build the static libraries
+make c-files    # regenerate Lake's C output (rerun if Lean changes)
+make clean      # remove build/
+make distclean  # also remove deps/
+make check-deps # verify the WASM static libs are present
+make help       # show resolved configuration
 ```
-
-The link line is:
-
-```
-em++ build/MainRuntime.o \
-     build/Fractran/Runtime/{Basic,Register,CBuf,Elim,Cycle}.o \
-     -L$(LEAN_WASM_LIBS) -lleancpp -lInit -lStd -lleanrt \
-     -L$(GMP_WASM_LIB) -lgmp \
-     -sALLOW_MEMORY_GROWTH=1 ... -o build/fractran.js
-```
-
-Six object files. No mathlib in the closure. The native build of the same
-target weighs in around 2.7 MB; the WASM output should be of similar order.

@@ -38,6 +38,10 @@ LEAN_WASM_LIBS  ?= $(abspath deps/lean-wasm/lib)
 GMP_WASM_LIB     ?= $(abspath deps/gmp-wasm/lib)
 GMP_WASM_INCLUDE ?= $(abspath deps/gmp-wasm/include)
 
+# Where the WASM-built libuv lives.
+LIBUV_WASM_LIB     ?= $(abspath deps/libuv-wasm/lib)
+LIBUV_WASM_INCLUDE ?= $(abspath deps/libuv-wasm/include)
+
 # Lean project root (where lakefile.toml lives)
 LEAN_PROJECT    ?= $(abspath ..)
 
@@ -69,12 +73,21 @@ EMCXX        ?= em++
 # Optimization. -O2 is a reasonable default; bump to -O3 if you want.
 OPT          ?= -O2
 
-# Lean codegen depends on the same flags leanc passes. Most important:
-# -DLEAN_BUILD_FOR_RELEASE for runtime macros, -fvisibility=hidden for size,
-# -fno-exceptions to match the runtime's no-exceptions build.
-CXXFLAGS_BASE := $(OPT) -std=c++17 -fno-exceptions -fvisibility=hidden \
-                 -DLEAN_BUILD_FOR_RELEASE
-CXXFLAGS_INC  := -I$(LEAN_PREFIX)/include -I$(GMP_WASM_INCLUDE)
+# Match the flags build-deps.sh used to compile libInit/libStd: same C++
+# standard (C++20 — atomic::wait/notify), same LEAN_* macros. Note: NO
+# -fno-exceptions; Lean's runtime uses `throw`. Catch blocks are still
+# omitted at -O1+ by emscripten default.
+CXXFLAGS_BASE := $(OPT) -std=c++20 -fvisibility=hidden \
+                 -DLEAN_BUILD_FOR_RELEASE \
+                 -DLEAN_EMSCRIPTEN \
+                 -DLEAN_MULTI_THREAD
+# $GEN_INC has the no-mimalloc config.h that build-deps.sh wrote. It must
+# come BEFORE $(LEAN_PREFIX)/include (which has the toolchain's mimalloc-on
+# config.h). Otherwise lean.h inlines mi_malloc_* calls and we get undefined
+# symbols at link time.
+GEN_INC       := $(abspath build/wasm-deps/gen-include)
+CXXFLAGS_INC  := -I$(GEN_INC) -I$(LEAN_PREFIX)/include \
+                 -I$(GMP_WASM_INCLUDE) -I$(LIBUV_WASM_INCLUDE)
 
 # Link flags. `-sALLOW_MEMORY_GROWTH=1` is essential — the demo allocates
 # big integers and lists. `-sINITIAL_MEMORY` gives us headroom up front.
@@ -87,15 +100,17 @@ LDFLAGS := \
     -sNO_EXIT_RUNTIME=0 \
     -sASSERTIONS=1 \
     -L$(LEAN_WASM_LIBS) \
-    -L$(GMP_WASM_LIB)
+    -L$(GMP_WASM_LIB) \
+    -L$(LIBUV_WASM_LIB)
 
-# Order matters for static linking: leanrt depends on Init/Std, leancpp glues
-# them together, and gmp is a leaf.
-LDLIBS := -lleancpp -lInit -lStd -lleanrt -lgmp
+# Order matters for static linking: Init+Std reference leanrt symbols; leanrt
+# pulls in libuv stubs and gmp. We don't link libleancpp (kernel/elaborator)
+# because we never build it — runtime-only modules don't need it.
+LDLIBS := -lInit -lStd -lleanrt -luv -lgmp
 
 # ---- Targets -----------------------------------------------------------------
 
-.PHONY: all setup c-files clean distclean check-deps help
+.PHONY: all setup build-deps c-files clean distclean check-deps help
 
 all: $(BUILD_DIR)/fractran.js
 
@@ -103,6 +118,12 @@ all: $(BUILD_DIR)/fractran.js
 # Does not build them — see README for emcmake/emconfigure commands.
 setup:
 	@./setup.sh
+
+# Build the WASM static archives we need (libleanrt.a, libInit.a, libStd.a)
+# from the cloned lean4. Skips the parser/elaborator/kernel — those targets
+# aren't requested. Intermediate output goes under deps/lean4/build-wasm/.
+build-deps:
+	@./build-deps.sh
 
 # Force a Lake rebuild of the runtime demo (regenerates the .c files we link).
 c-files:
@@ -114,8 +135,18 @@ $(BUILD_DIR)/%.o: $(LEAN_IR_DIR)/%.c | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
 	$(EMCXX) $(CXXFLAGS_BASE) $(CXXFLAGS_INC) -c $< -o $@
 
+# Static archives we link against. Listing them here makes the link a real
+# dependency — `make` will re-link if any of them change (e.g. after rebuilding
+# libleanrt.a via `make build-deps` after a patch update).
+WASM_STATIC_LIBS := \
+    $(LEAN_WASM_LIBS)/libleanrt.a \
+    $(LEAN_WASM_LIBS)/libInit.a \
+    $(LEAN_WASM_LIBS)/libStd.a \
+    $(GMP_WASM_LIB)/libgmp.a \
+    $(LIBUV_WASM_LIB)/libuv.a
+
 # Link everything into the final wasm + js loader.
-$(BUILD_DIR)/fractran.js: $(WASM_OBJS) | check-deps
+$(BUILD_DIR)/fractran.js: $(WASM_OBJS) $(WASM_STATIC_LIBS) | check-deps
 	$(EMCXX) $(LDFLAGS) $(WASM_OBJS) $(LDLIBS) -o $@
 	@echo
 	@echo "==> Built $(BUILD_DIR)/fractran.js + $(BUILD_DIR)/fractran.wasm"
@@ -126,13 +157,16 @@ $(BUILD_DIR):
 # Sanity-check that the user has built / placed the prerequisite static libs.
 check-deps:
 	@missing= ; \
-	for lib in libleanrt.a libInit.a libStd.a libleancpp.a ; do \
+	for lib in libleanrt.a libInit.a libStd.a ; do \
 	  if [ ! -f "$(LEAN_WASM_LIBS)/$$lib" ]; then \
 	    missing="$$missing $(LEAN_WASM_LIBS)/$$lib" ; \
 	  fi ; \
 	done ; \
 	if [ ! -f "$(GMP_WASM_LIB)/libgmp.a" ]; then \
 	  missing="$$missing $(GMP_WASM_LIB)/libgmp.a" ; \
+	fi ; \
+	if [ ! -f "$(LIBUV_WASM_LIB)/libuv.a" ]; then \
+	  missing="$$missing $(LIBUV_WASM_LIB)/libuv.a" ; \
 	fi ; \
 	if [ -n "$$missing" ]; then \
 	  echo "ERROR: missing WASM-built static libraries:" ; \
@@ -156,6 +190,7 @@ help:
 	@echo "Targets:"
 	@echo "  all         - build $(BUILD_DIR)/fractran.{js,wasm} (default)"
 	@echo "  setup       - fetch lean4 + GMP sources into deps/"
+	@echo "  build-deps  - build WASM lean4 + GMP archives into deps/{lean-wasm,gmp-wasm}/"
 	@echo "  c-files     - regenerate Lake's C output"
 	@echo "  check-deps  - verify WASM static libs and emcc toolchain are present"
 	@echo "  clean       - remove $(BUILD_DIR)/"
