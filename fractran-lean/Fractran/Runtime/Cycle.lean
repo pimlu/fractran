@@ -212,3 +212,31 @@ def cycleRunAux (table : Array (List Candidate))
   | st, fuel + 1 =>
     cycleRunAux table fallback thresh dmaxes
       (cycleStep table fallback thresh dmaxes st) fuel
+
+/-- Build a `RegMap` from an explicit list of `(prime, exponent)` pairs.
+    The mathlib-free analogue of `RegMap.facmap` — the caller does the
+    factorization themselves, so this works in the runtime closure. -/
+def RegMap.ofFactors (factors : List (Nat × Nat)) : RegMap :=
+  factors.foldl (fun acc (p, e) => acc.insert p e) ∅
+
+/-- Top-level cycle-detecting interpreter taking an already-factored program.
+
+    The `Fractran.Cycle.cycleRunFromMap` wrapper accepts a `FractranProg`
+    (a list of `(Nat, Nat)` fractions) and calls `prog.toRegProg` to convert
+    each numerator and denominator via `RegMap.facmap`. That conversion uses
+    `Nat.primeFactorsList` from mathlib, so it pulls mathlib into the import
+    closure. This variant skips the conversion: callers pass the program as
+    a `List (RegMap × RegMap)` they built themselves (e.g. via
+    `RegMap.ofFactors`), keeping the closure mathlib-free. -/
+def cycleRunFromRegProg (cyclen : Nat) (hcyclen : 0 < cyclen)
+    (regProg : List (RegMap × RegMap)) (m : RegMap) (k : Nat) : CycleState :=
+  let table := optTable regProg
+  let cands := allCandidates regProg
+  let thresh := dthreshMap regProg cyclen
+  let dmaxes := dmaxesMap regProg
+  let initState : CycleState :=
+    { m := m
+      cands := cands
+      buf := CBuf.empty cyclen hcyclen
+      stepsSimulated := 0 }
+  cycleRunAux table cands thresh dmaxes initState k
