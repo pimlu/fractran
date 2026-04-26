@@ -103,6 +103,23 @@ LDFLAGS := \
     -L$(GMP_WASM_LIB) \
     -L$(LIBUV_WASM_LIB)
 
+# Web-targeted link flags. Same base flags plus:
+#   MODULARIZE + EXPORT_ES6   - emit an ES module whose default export is a
+#                               Module factory. Lets the worker do
+#                               `import Module from './fractran-web.js'`.
+#   INVOKE_RUN=0              - don't auto-run main; the worker calls
+#                               Module.callMain([]) explicitly so it can
+#                               install print/printErr first.
+#   EXPORTED_RUNTIME_METHODS  - keep callMain accessible after closure compiler.
+#   ENVIRONMENT=web,worker    - drop the node-only code paths to shrink output.
+LDFLAGS_WEB := \
+    $(LDFLAGS) \
+    -sMODULARIZE=1 \
+    -sEXPORT_ES6=1 \
+    -sINVOKE_RUN=0 \
+    -sEXPORTED_RUNTIME_METHODS=callMain \
+    -sENVIRONMENT=web,worker
+
 # Order matters for static linking: Init+Std reference leanrt symbols; leanrt
 # pulls in libuv stubs and gmp. We don't link libleancpp (kernel/elaborator)
 # because we never build it — runtime-only modules don't need it.
@@ -112,7 +129,7 @@ LDLIBS := -lInit -lStd -lleanrt -luv -lgmp
 
 .PHONY: all setup build-deps c-files clean distclean check-deps help
 
-all: $(BUILD_DIR)/fractran.js
+all: $(BUILD_DIR)/fractran.js $(BUILD_DIR)/fractran-web.js
 
 # Fetch lean4 source (matching lean-toolchain) and GMP tarball into deps/.
 # Does not build them — see README for emcmake/emconfigure commands.
@@ -151,6 +168,13 @@ $(BUILD_DIR)/fractran.js: $(WASM_OBJS) $(WASM_STATIC_LIBS) | check-deps
 	@echo
 	@echo "==> Built $(BUILD_DIR)/fractran.js + $(BUILD_DIR)/fractran.wasm"
 
+# Web variant: same .o files, different link flags. Produces an ES module
+# (fractran-web.js) plus the wasm sidecar (fractran-web.wasm).
+$(BUILD_DIR)/fractran-web.js: $(WASM_OBJS) $(WASM_STATIC_LIBS) | check-deps
+	$(EMCXX) $(LDFLAGS_WEB) $(WASM_OBJS) $(LDLIBS) -o $@
+	@echo
+	@echo "==> Built $(BUILD_DIR)/fractran-web.js + $(BUILD_DIR)/fractran-web.wasm"
+
 $(BUILD_DIR):
 	@mkdir -p $(BUILD_DIR)
 
@@ -188,7 +212,9 @@ distclean: clean
 
 help:
 	@echo "Targets:"
-	@echo "  all         - build $(BUILD_DIR)/fractran.{js,wasm} (default)"
+	@echo "  all         - build node + web variants (default)"
+	@echo "  $(BUILD_DIR)/fractran.js     - node sanity demo (runs main on import)"
+	@echo "  $(BUILD_DIR)/fractran-web.js - web ES module (default export = Module factory)"
 	@echo "  setup       - fetch lean4 + GMP sources into deps/"
 	@echo "  build-deps  - build WASM lean4 + GMP archives into deps/{lean-wasm,gmp-wasm}/"
 	@echo "  c-files     - regenerate Lake's C output"
