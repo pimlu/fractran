@@ -2,39 +2,23 @@ import { useEffect, useRef, useState } from 'react';
 import Button from '@mui/material/Button';
 import Stack from '@mui/material/Stack';
 import Typography from '@mui/material/Typography';
+import TextField from '@mui/material/TextField';
 import Box from '@mui/material/Box';
 import type { RunMessage, WorkerOutgoing } from './fractran.worker.ts';
+import { buildWireInput } from './wire.ts';
 import fractranWasmUrl from './wasm/fractran-web.wasm?url';
 
 type Status = 'loading' | 'ready' | 'running' | 'error';
 
-// Hamming program from MainRuntime.lean, in the JsBridge wire format.
-// Layout: cyclen fuel numFractions [for each: numFactorCount p e... denFactorCount p e...]
-//         initFactorCount p e ...
-//
-// Fractions: 33/20, 5/11, 13/10, 1/5, 2/3, 10/7, 7/2
-function buildHammingInput(): string {
-  const tokens: bigint[] = [
-    2n, 1_000_000n, 7n,
-    // 33/20 = (3*11) / (2^2 * 5)
-    2n, 3n, 1n, 11n, 1n,   2n, 2n, 2n, 5n, 1n,
-    // 5/11
-    1n, 5n, 1n,            1n, 11n, 1n,
-    // 13/10 = 13 / (2*5)
-    1n, 13n, 1n,           2n, 2n, 1n, 5n, 1n,
-    // 1/5
-    0n,                    1n, 5n, 1n,
-    // 2/3
-    1n, 2n, 1n,            1n, 3n, 1n,
-    // 10/7 = (2*5) / 7
-    2n, 2n, 1n, 5n, 1n,    1n, 7n, 1n,
-    // 7/2
-    1n, 7n, 1n,            1n, 2n, 1n,
-    // init: 2^(2^128 - 1)
-    1n, 2n, (1n << 128n) - 1n,
-  ];
-  return tokens.join(' ');
-}
+const DEFAULT_PROGRAM = `3*11 % 2^2*5
+5 % 11
+13 % 2*5
+1 % 5
+2 % 3
+2*5 % 7
+7 % 2`;
+const DEFAULT_INPUT = '[2, 2^128 - 1]';
+const DEFAULT_CYCLEN = '2';
 
 interface DecodedOk {
   kind: 'ok';
@@ -64,9 +48,14 @@ function decodeResult(text: string): DecodedOk | DecodedErr {
 
 export default function App() {
   const wasmRef = useRef<ArrayBuffer | null>(null);
+  const workerRef = useRef<Worker | null>(null);
   const [status, setStatus] = useState<Status>('loading');
   const [errorMsg, setErrorMsg] = useState<string>('');
   const [decoded, setDecoded] = useState<DecodedOk | DecodedErr | null>(null);
+
+  const [programSrc, setProgramSrc] = useState(DEFAULT_PROGRAM);
+  const [inputSrc, setInputSrc] = useState(DEFAULT_INPUT);
+  const [cyclenSrc, setCyclenSrc] = useState(DEFAULT_CYCLEN);
 
   useEffect(() => {
     let cancelled = false;
@@ -89,15 +78,39 @@ export default function App() {
     };
   }, []);
 
+  const stop = () => {
+    if (workerRef.current) {
+      workerRef.current.terminate();
+      workerRef.current = null;
+    }
+    setStatus('ready');
+  };
+
   const run = () => {
     const wasmBinary = wasmRef.current;
     if (!wasmBinary) return;
-    setStatus('running');
+    setErrorMsg('');
     setDecoded(null);
+
+    let programInput: string;
+    try {
+      programInput = buildWireInput({
+        cyclen: BigInt(cyclenSrc),
+        programSrc,
+        inputSrc,
+      });
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : String(err));
+      setStatus('error');
+      return;
+    }
+
+    setStatus('running');
     const worker = new Worker(
       new URL('./fractran.worker.ts', import.meta.url),
       { type: 'module' },
     );
+    workerRef.current = worker;
     worker.onmessage = (e: MessageEvent<WorkerOutgoing>) => {
       const msg = e.data;
       switch (msg.type) {
@@ -105,6 +118,7 @@ export default function App() {
           setDecoded(decodeResult(msg.text));
           setStatus('ready');
           worker.terminate();
+          workerRef.current = null;
           break;
         case 'stderr':
           // eslint-disable-next-line no-console
@@ -114,43 +128,64 @@ export default function App() {
           setErrorMsg(msg.message);
           setStatus('error');
           worker.terminate();
+          workerRef.current = null;
           break;
       }
     };
-    const initMsg: RunMessage = {
-      type: 'run',
-      wasmBinary,
-      programInput: buildHammingInput(),
-    };
+    const initMsg: RunMessage = { type: 'run', wasmBinary, programInput };
     worker.postMessage(initMsg);
   };
+
+  const isRunning = status === 'running';
+  const canStart = status === 'ready' || status === 'error';
 
   return (
     <Stack spacing={2} sx={{ p: 4, maxWidth: 720 }}>
       <Typography variant="h4">FRACTRAN</Typography>
       <Typography variant="body2">
-        Phase 2a: passes a hardcoded Hamming program from JS to a Lean
-        <code> @[export]</code> function via emscripten ccall, decodes the
-        wire-format result. Phase 2b will add a real parser; 2c the UI.
+        Write a FRACTRAN program (fractions separated by commas or newlines) and
+        an initial state. Initial state is either an integer expression (will be
+        prime-factorized) or a list of <code>[prime, value]</code> pairs.
       </Typography>
+
+      <TextField
+        label="Program"
+        multiline
+        minRows={6}
+        value={programSrc}
+        onChange={(e) => setProgramSrc(e.target.value)}
+        slotProps={{ htmlInput: { style: { fontFamily: 'monospace' } } }}
+      />
+      <TextField
+        label="Initial state"
+        value={inputSrc}
+        onChange={(e) => setInputSrc(e.target.value)}
+        slotProps={{ htmlInput: { style: { fontFamily: 'monospace' } } }}
+      />
+      <TextField
+        label="Cycle length"
+        value={cyclenSrc}
+        onChange={(e) => setCyclenSrc(e.target.value)}
+        sx={{ width: 200 }}
+      />
+
       <Stack direction="row" spacing={2} alignItems="center">
-        <Button
-          variant="contained"
-          onClick={run}
-          disabled={status !== 'ready'}
-        >
-          {status === 'loading'
-            ? 'Loading WASM…'
-            : status === 'running'
-              ? 'Running…'
-              : 'Run Hamming demo'}
-        </Button>
-        {status === 'error' && (
-          <Typography color="error" variant="body2">
+        {isRunning ? (
+          <Button variant="contained" color="error" onClick={stop}>
+            Stop
+          </Button>
+        ) : (
+          <Button variant="contained" onClick={run} disabled={!canStart}>
+            {status === 'loading' ? 'Loading WASM…' : 'Run'}
+          </Button>
+        )}
+        {errorMsg && (
+          <Typography color="error" variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
             {errorMsg}
           </Typography>
         )}
       </Stack>
+
       <Box
         component="pre"
         sx={{
@@ -163,7 +198,9 @@ export default function App() {
         }}
       >
         {decoded === null
-          ? '(no result yet)'
+          ? isRunning
+            ? '(running…)'
+            : '(no result yet)'
           : decoded.kind === 'err'
             ? `error: ${decoded.reason}`
             : [
@@ -173,10 +210,6 @@ export default function App() {
                 ...[...decoded.factors.entries()].map(
                   ([p, e]) => `  ${p}^${e}`,
                 ),
-                ``,
-                `Hamming weight (exponent of 13): ${
-                  decoded.factors.get(13n)?.toString() ?? '(missing)'
-                }`,
               ].join('\n')}
       </Box>
     </Stack>
