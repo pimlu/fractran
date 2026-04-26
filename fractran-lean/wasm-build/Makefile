@@ -160,10 +160,24 @@ setup:
 build-deps:
 	@./build-deps.sh
 
-# Force a Lake rebuild of the runtime demo (regenerates the .c files we link).
-c-files:
-	@echo "==> Regenerating C files via Lake (node + web)"
-	cd $(LEAN_PROJECT) && lake build fractran-runtime-demo fractran-web-lib
+# Run lake to keep the .c files in sync with the .lean sources. Always invoked
+# (it's .PHONY); lake itself is a no-op when nothing has changed (~2s).
+#
+# Wired into the build chain via an order-only prereq on $(LEAN_C_SRCS) below,
+# so plain `make` regenerates the .c files first — no need to run this by hand
+# after editing .lean files.
+.PHONY: lake-build
+lake-build:
+	@cd $(LEAN_PROJECT) && lake build fractran-runtime-demo fractran-web-lib
+
+# Order-only: lake-build is run first when checking the .c files, but its
+# always-out-of-date .PHONY status doesn't propagate downstream. Each .c only
+# triggers a recompile when lake actually updates its mtime.
+$(LEAN_C_SRCS): | lake-build
+
+# Backwards-compat alias.
+.PHONY: c-files
+c-files: lake-build
 
 # Compile each Lean-generated .c into a .o under build/.
 $(BUILD_DIR)/%.o: $(LEAN_IR_DIR)/%.c | $(BUILD_DIR)

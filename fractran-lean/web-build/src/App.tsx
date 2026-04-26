@@ -4,20 +4,16 @@ import Stack from '@mui/material/Stack';
 import Typography from '@mui/material/Typography';
 import TextField from '@mui/material/TextField';
 import Box from '@mui/material/Box';
+import MenuItem from '@mui/material/MenuItem';
 import type { RunMessage, WorkerOutgoing } from './fractran.worker.ts';
 import { buildWireInput } from './wire.ts';
+import { examples, DEFAULT_EXAMPLE } from './examples.ts';
 import fractranWasmUrl from './wasm/fractran-web.wasm?url';
 
 type Status = 'loading' | 'ready' | 'running' | 'error';
 
-const DEFAULT_PROGRAM = `3*11 % 2^2*5
-5 % 11
-13 % 2*5
-1 % 5
-2 % 3
-2*5 % 7
-7 % 2`;
-const DEFAULT_INPUT = '[2, 2^128 - 1]';
+const defaultExample =
+  examples.find((e) => e.name === DEFAULT_EXAMPLE) ?? examples[0]!;
 const DEFAULT_CYCLEN = '2';
 
 interface DecodedOk {
@@ -53,9 +49,18 @@ export default function App() {
   const [errorMsg, setErrorMsg] = useState<string>('');
   const [decoded, setDecoded] = useState<DecodedOk | DecodedErr | null>(null);
 
-  const [programSrc, setProgramSrc] = useState(DEFAULT_PROGRAM);
-  const [inputSrc, setInputSrc] = useState(DEFAULT_INPUT);
+  const [exampleName, setExampleName] = useState(defaultExample.name);
+  const [programSrc, setProgramSrc] = useState(defaultExample.program);
+  const [inputSrc, setInputSrc] = useState(defaultExample.input);
   const [cyclenSrc, setCyclenSrc] = useState(DEFAULT_CYCLEN);
+
+  const selectExample = (name: string) => {
+    const ex = examples.find((e) => e.name === name);
+    if (!ex) return;
+    setExampleName(name);
+    setProgramSrc(ex.program);
+    setInputSrc(ex.input);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -149,17 +154,36 @@ export default function App() {
       </Typography>
 
       <TextField
+        select
+        label="Example"
+        value={exampleName}
+        onChange={(e) => selectExample(e.target.value)}
+      >
+        {examples.map((ex) => (
+          <MenuItem key={ex.name} value={ex.name}>
+            {ex.name}
+          </MenuItem>
+        ))}
+      </TextField>
+
+      <TextField
         label="Program"
         multiline
         minRows={6}
         value={programSrc}
-        onChange={(e) => setProgramSrc(e.target.value)}
+        onChange={(e) => {
+          setProgramSrc(e.target.value);
+          setExampleName('');
+        }}
         slotProps={{ htmlInput: { style: { fontFamily: 'monospace' } } }}
       />
       <TextField
         label="Initial state"
         value={inputSrc}
-        onChange={(e) => setInputSrc(e.target.value)}
+        onChange={(e) => {
+          setInputSrc(e.target.value);
+          setExampleName('');
+        }}
         slotProps={{ htmlInput: { style: { fontFamily: 'monospace' } } }}
       />
       <TextField
