@@ -24,3 +24,7 @@ root = "Main"
 [[lean_exe]]
 name = "fractran-runtime-demo"
 root = "MainRuntime"
+
+[[lean_exe]]
+name = "fractran-web-lib"
+root = "MainWeb"

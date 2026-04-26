@@ -53,17 +53,29 @@ BUILD_DIR       := build
 
 # ---- Source files ------------------------------------------------------------
 
-# Modules in the runtime closure. Order doesn't matter for compilation.
-LEAN_MODULES := \
-    MainRuntime \
+# Modules shared between the node and web builds.
+LEAN_MODULES_SHARED := \
     Fractran/Runtime/Basic \
     Fractran/Runtime/Register \
     Fractran/Runtime/CBuf \
     Fractran/Runtime/Elim \
     Fractran/Runtime/Cycle
 
-LEAN_C_SRCS  := $(addprefix $(LEAN_IR_DIR)/,$(addsuffix .c,$(LEAN_MODULES)))
-WASM_OBJS    := $(addprefix $(BUILD_DIR)/,$(addsuffix .o,$(LEAN_MODULES)))
+# Node target: hardcoded Hamming demo. MainRuntime defines `def main`.
+LEAN_MODULES_NODE := MainRuntime $(LEAN_MODULES_SHARED)
+
+# Web target: empty `def main` in MainWeb (Lean runtime init only) plus the
+# JsBridge module that defines @[export] fractran_run_lean.
+LEAN_MODULES_WEB := MainWeb Fractran/Runtime/JsBridge $(LEAN_MODULES_SHARED)
+
+# Concatenation of all modules — used for compiling .o files (each module
+# compiled once, linked into whichever binary needs it).
+LEAN_MODULES := $(sort $(LEAN_MODULES_NODE) $(LEAN_MODULES_WEB))
+
+LEAN_C_SRCS    := $(addprefix $(LEAN_IR_DIR)/,$(addsuffix .c,$(LEAN_MODULES)))
+WASM_OBJS_NODE := $(addprefix $(BUILD_DIR)/,$(addsuffix .o,$(LEAN_MODULES_NODE)))
+WASM_OBJS_WEB  := $(addprefix $(BUILD_DIR)/,$(addsuffix .o,$(LEAN_MODULES_WEB)))
+BRIDGE_OBJ     := $(BUILD_DIR)/bridge.o
 
 # ---- Compiler flags ----------------------------------------------------------
 
@@ -97,7 +109,6 @@ LDFLAGS := \
     -sALLOW_MEMORY_GROWTH=1 \
     -sINITIAL_MEMORY=64MB \
     -sSTACK_SIZE=8MB \
-    -sNO_EXIT_RUNTIME=0 \
     -sASSERTIONS=1 \
     -L$(LEAN_WASM_LIBS) \
     -L$(GMP_WASM_LIB) \
@@ -108,16 +119,23 @@ LDFLAGS := \
 #                               Module factory. Lets the worker do
 #                               `import Module from './fractran-web.js'`.
 #   INVOKE_RUN=0              - don't auto-run main; the worker calls
-#                               Module.callMain([]) explicitly so it can
-#                               install print/printErr first.
-#   EXPORTED_RUNTIME_METHODS  - keep callMain accessible after closure compiler.
+#                               Module.callMain([]) explicitly to initialize
+#                               the Lean runtime, then ccall fractran_run.
+#   EXPORTED_FUNCTIONS        - keep `_fractran_run` (defined in bridge.cpp,
+#                               wraps the Lean-generated fractran_run_lean)
+#                               and `_free` (so JS can free the returned
+#                               malloc'd char*).
+#   EXPORTED_RUNTIME_METHODS  - JS-side helpers: callMain to init, ccall to
+#                               invoke the bridge, UTF8ToString to decode.
 #   ENVIRONMENT=web,worker    - drop the node-only code paths to shrink output.
 LDFLAGS_WEB := \
     $(LDFLAGS) \
     -sMODULARIZE=1 \
     -sEXPORT_ES6=1 \
     -sINVOKE_RUN=0 \
-    -sEXPORTED_RUNTIME_METHODS=callMain \
+    -sNO_EXIT_RUNTIME=1 \
+    -sEXPORTED_FUNCTIONS=_fractran_run,_main,_malloc,_free \
+    -sEXPORTED_RUNTIME_METHODS=callMain,ccall,UTF8ToString \
     -sENVIRONMENT=web,worker
 
 # Order matters for static linking: Init+Std reference leanrt symbols; leanrt
@@ -144,12 +162,16 @@ build-deps:
 
 # Force a Lake rebuild of the runtime demo (regenerates the .c files we link).
 c-files:
-	@echo "==> Regenerating C files via Lake"
-	cd $(LEAN_PROJECT) && lake build fractran-runtime-demo
+	@echo "==> Regenerating C files via Lake (node + web)"
+	cd $(LEAN_PROJECT) && lake build fractran-runtime-demo fractran-web-lib
 
 # Compile each Lean-generated .c into a .o under build/.
 $(BUILD_DIR)/%.o: $(LEAN_IR_DIR)/%.c | $(BUILD_DIR)
 	@mkdir -p $(dir $@)
+	$(EMCXX) $(CXXFLAGS_BASE) $(CXXFLAGS_INC) -c $< -o $@
+
+# Compile the C++ bridge (in-tree, not from Lake's IR dir).
+$(BRIDGE_OBJ): bridge.cpp | $(BUILD_DIR)
 	$(EMCXX) $(CXXFLAGS_BASE) $(CXXFLAGS_INC) -c $< -o $@
 
 # Static archives we link against. Listing them here makes the link a real
@@ -162,16 +184,16 @@ WASM_STATIC_LIBS := \
     $(GMP_WASM_LIB)/libgmp.a \
     $(LIBUV_WASM_LIB)/libuv.a
 
-# Link everything into the final wasm + js loader.
-$(BUILD_DIR)/fractran.js: $(WASM_OBJS) $(WASM_STATIC_LIBS) | check-deps
-	$(EMCXX) $(LDFLAGS) $(WASM_OBJS) $(LDLIBS) -o $@
+# Link the node demo (MainRuntime + shared runtime modules).
+$(BUILD_DIR)/fractran.js: $(WASM_OBJS_NODE) $(WASM_STATIC_LIBS) | check-deps
+	$(EMCXX) $(LDFLAGS) $(WASM_OBJS_NODE) $(LDLIBS) -o $@
 	@echo
 	@echo "==> Built $(BUILD_DIR)/fractran.js + $(BUILD_DIR)/fractran.wasm"
 
-# Web variant: same .o files, different link flags. Produces an ES module
-# (fractran-web.js) plus the wasm sidecar (fractran-web.wasm).
-$(BUILD_DIR)/fractran-web.js: $(WASM_OBJS) $(WASM_STATIC_LIBS) | check-deps
-	$(EMCXX) $(LDFLAGS_WEB) $(WASM_OBJS) $(LDLIBS) -o $@
+# Link the web variant (MainWeb + JsBridge + shared modules + bridge.cpp).
+# Produces an ES module (fractran-web.js) plus the wasm sidecar.
+$(BUILD_DIR)/fractran-web.js: $(WASM_OBJS_WEB) $(BRIDGE_OBJ) $(WASM_STATIC_LIBS) | check-deps
+	$(EMCXX) $(LDFLAGS_WEB) $(WASM_OBJS_WEB) $(BRIDGE_OBJ) $(LDLIBS) -o $@
 	@echo
 	@echo "==> Built $(BUILD_DIR)/fractran-web.js + $(BUILD_DIR)/fractran-web.wasm"
 
