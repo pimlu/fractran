@@ -1,21 +1,14 @@
+import Fractran.Runtime.Basic
 import Mathlib.Data.Nat.Notation
 
-/-- A FRACTRAN program: an ordered list of fractions, each given as a
-    (numerator, denominator) pair. -/
-abbrev FractranProg := List (ℕ × ℕ)
+/-!
+# FRACTRAN proof-side predicates
 
-/-- One step of the naive FRACTRAN interpreter.
-    Scans for the first fraction `(p, q)` such that `q ∣ n`, returning `n / q * p`.
-    Returns `none` if no fraction applies (the program halts). -/
-def naiveStep (prog : FractranProg) (n : ℕ) : Option ℕ :=
-  prog.findSome? fun (p, q) => if q ∣ n then some (n / q * p) else none
-
-/-- Run the naive interpreter for exactly `k` steps from state `n`.
-    Returns `some m` if the program reaches state `m` after exactly `k` steps;
-    returns `none` if it halted at some earlier step. -/
-def naiveRun (prog : FractranProg) (n : ℕ) : ℕ → Option ℕ
-  | 0     => some n
-  | k + 1 => naiveRun prog n k >>= naiveStep prog
+The runtime data (`FractranProg`, `naiveStep`, `naiveRun`) lives in
+`Fractran.Runtime.Basic` so it can be compiled to C without mathlib in the
+import closure. This file adds the proof-side predicates used by the
+correctness theorems.
+-/
 
 /-- `HaltsIn prog n k` holds when the program reaches a halting state in exactly `k` steps
     from `n` — i.e., `naiveRun prog n k = some m` for some `m` with no applicable fraction. -/

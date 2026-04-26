@@ -1,5 +1,6 @@
 import Fractran.Elim
 import Fractran.CBuf
+import Fractran.Runtime.Cycle
 import Mathlib.Tactic.Linarith
 import Mathlib.Tactic.Ring
 
@@ -38,54 +39,10 @@ The correctness proof has three layers:
 - `cycleRunNat`   ↔ `cycles'` in Fractran.hs (line 133-151)
 -/
 
-/-! ## Threshold and state splitting -/
+/-! ## Threshold and state splitting
 
-/-- Maximum exponent of prime `p` across all denominators in the program.
-    Corresponds to `m_p = max_{i} b_{i,p}` in the paper. -/
-def maxDenom (prog : List (RegMap × RegMap)) (p : ℕ) : ℕ :=
-  prog.foldl (fun acc (_, den) => max acc (den.getD p 0)) 0
-
-/-- The threshold for prime `p` above which a register is considered "data".
-    A register with exponent `≥ dthresh` cannot affect which fraction fires.
-    Corresponds to `l · m_p` in the paper, where `l` is the cycle buffer
-    capacity (here we use the cycle length from the buffer). -/
-def dthresh (prog : List (RegMap × RegMap)) (cyclen : ℕ) (p : ℕ) : ℕ :=
-  cyclen * maxDenom prog p
-
-/-- The threshold as a RegMap: maps each prime appearing in any denominator
-    to its `dthresh` value. Corresponds to `dthresh` in Fractran.hs. -/
-def dthreshMap (prog : List (RegMap × RegMap)) (cyclen : ℕ) : RegMap :=
-  let allDenPrimes := prog.foldl (fun acc (_, den) =>
-    den.foldl (fun a p _ => a.insert p 0) acc) (∅ : RegMap)
-  allDenPrimes.foldl (fun acc p _ =>
-    let v := dthresh prog cyclen p
-    if v = 0 then acc else acc.insert p v) ∅
-
-/-- Split a state into (data, logic) components relative to a threshold map.
-    - **data**: registers with exponent `> thresh_p` — the excess above threshold
-    - **logic**: registers with exponent `≤ thresh_p` — `min(exp, thresh)` per prime
-
-    The original state can be recovered as `data * logic` (pointwise exponent
-    addition), since for each prime: `(exp - min(exp, thresh)) + min(exp, thresh) = exp`.
-
-    In the Haskell: `stateSplit :: IntMap -> IntMap -> (IntMap, IntMap)`.
-    There, data registers are those where `a >= thresh`, putting the excess in data
-    and `thresh` in logic. We follow the same convention.
-
-    Note: primes not in `thresh` (no denominator mentions them) are placed entirely
-    in data, since they can never affect fraction applicability. -/
-def stateSplit (thresh : RegMap) (m : RegMap) : RegMap × RegMap :=
-  let logic := m.foldl (fun acc p e =>
-    let t := thresh.getD p 0
-    if t = 0 then acc
-    else
-      let logicVal := min e t
-      if logicVal = 0 then acc else acc.insert p logicVal) ∅
-  let data := m.foldl (fun acc p e =>
-    let t := thresh.getD p 0
-    let dataVal := if t = 0 then e else e - min e t
-    if dataVal = 0 then acc else acc.insert p dataVal) ∅
-  (data, logic)
+    Definitions (`maxDenom`, `dthresh`, `dthreshMap`, `stateSplit`) live in
+    `Fractran.Runtime.Cycle`. -/
 
 /-- Helper: conditional foldl when key not present returns init. -/
 private theorem foldl_cond_none (l : List (ℕ × ℕ)) (g : ℕ → ℕ → ℕ) (p : ℕ) (init : ℕ)
@@ -325,52 +282,9 @@ theorem stateSplit_data_getD (thresh m : RegMap) (p : ℕ) :
   · simp only [ht, ↓reduceIte] at hlogic ⊢; omega
   · simp only [ht, ↓reduceIte] at hlogic ⊢; omega
 
-/-! ## Cycle metrics -/
+/-! ## Cycle metrics
 
-/-- The margin for register `p` during a cycle: the minimum value reached
-    during the cycle minus the threshold. If negative, the register dipped
-    into logic territory during the cycle.
-
-    `history` is the sequence of states from `n_j` through `n_i` (the cycle).
-    Corresponds to `margin_p` in the paper. -/
-def margin (thresh : RegMap) (history : List RegMap) (p : ℕ) : Int :=
-  let minVal := history.foldl (fun acc m => min acc (m.getD p 0)) (history.head!.getD p 0)
-  (minVal : Int) - (thresh.getD p 0 : Int)
-
-/-- The "life" of register `p`: how many cycles it can sustain before
-    potentially becoming a logic register.
-
-    Returns `none` for infinite life (register is constant or increasing).
-    Returns `some 0` if the margin is negative (already dipped).
-    Returns `some k` for finite life.
-
-    Corresponds to `life_p` in the paper and `life` in `leap` (Fractran.hs). -/
-def life (thresh : RegMap) (history : List RegMap) (startState endState : RegMap)
-    (p : ℕ) : Option ℕ :=
-  let s := startState.getD p 0 -- n_{j,p}
-  let e := endState.getD p 0 -- n_{i,p}
-  if s = e then none -- constant → infinite life
-  else
-    let m := margin thresh history p
-    if m < 0 then some 0 -- already dipped into logic
-    else if e > s then none -- increasing → infinite life
-    else -- decreasing: life = margin / (s - e)
-      some (m.toNat / (s - e))
-
-/-- The number of safe cycle repetitions: minimum life across all data registers.
-    Returns `none` if the cycle is nonterminating (all lives are infinite).
-
-    Corresponds to `c = min {life_p | p ∈ D_i} ∪ {∞}` in the paper,
-    and the `cs`/`steps` computation in `leap` (Fractran.hs lines 115-126). -/
-def leapCount (thresh : RegMap) (history : List RegMap)
-    (startData endData : RegMap) : Option ℕ :=
-  let keys := (startData.foldl (fun acc p _ => acc.insert p 0) endData).toList.map Prod.fst
-  let lives := keys.filterMap fun p => life thresh history
-    (startData.foldl (fun acc k v => acc.insert k v) ∅)
-    (endData.foldl (fun acc k v => acc.insert k v) ∅) p
-  match lives with
-  | [] => none -- all infinite → nonterminating cycle
-  | l => some (l.foldl min l.head!)
+    Definitions (`margin`, `life`, `leapCount`) live in `Fractran.Runtime.Cycle`. -/
 
 /-- foldl insert preserves getD when the key is not in the list. -/
 private theorem foldl_insert_getD_of_not_mem (l : List (ℕ × ℕ)) (p : ℕ) (acc : RegMap)
@@ -598,23 +512,7 @@ theorem leapCount_pos_imp (thresh : RegMap) (history : List RegMap)
       rw [hmargin_def] at hmargin_nonneg hcsub_le
       omega
 
-/-- Advance the state by `c` cycles. The new data registers are:
-      data_new = endData + c * (endData - startData)
-    (pointwise, where subtraction is on integers then clamped to ℕ).
-    The logic registers stay the same.
-
-    Corresponds to `n = fprod slogic newdata` in `leap` (Fractran.hs line 128)
-    and `n_{i + c(i-j)} = n_i · (n_i / n_j)^c` in the paper. -/
-def leapState (startData endData logic : RegMap) (c : ℕ) : RegMap :=
-  let keys := (startData.foldl (fun acc p _ => acc.insert p 0) endData).toList.map Prod.fst
-  let newData := keys.foldl (fun acc p =>
-    let sv := startData.getD p 0
-    let ev := endData.getD p 0
-    let nv := if ev ≥ sv
-      then ev + c * (ev - sv)
-      else ev - c * (sv - ev)
-    if nv = 0 then acc else acc.insert p nv) (∅ : RegMap)
-  newData * logic
+-- `leapState` lives in `Fractran.Runtime.Cycle`.
 
 /-! ## Data-register irrelevance (Lemma 1 from the paper) -/
 
@@ -1302,20 +1200,10 @@ bookkeeping. The mathematical core — that cycles are additive and same fractio
 fire under `CycleInvariant` — is fully proved.
 -/
 
-/-! ## The cycle-detecting interpreter -/
+/-! ## The cycle-detecting interpreter
 
-/-- Canonical comparison for RegMap (sorted key-value lists).
-    Used by `CBuf.getRange` to detect repeated logic states. -/
-instance : BEq RegMap where
-  beq a b := a.toList == b.toList
-
-/-- Max denominator per prime across all fractions. Corresponds to
-    `dmaxes = M.unionsWith max $ map snd fmaps` in Fractran.hs. -/
-def dmaxesMap (prog : List (RegMap × RegMap)) : RegMap :=
-  prog.foldl (fun acc (_, den) =>
-    den.foldl (fun a p e =>
-      let cur := a.getD p 0
-      if e > cur then a.insert p e else a) acc) ∅
+    The `BEq RegMap` instance and `dmaxesMap` definition live in
+    `Fractran.Runtime.Cycle`. -/
 
 /-- foldl with conditional max-insert: result at `p` is `acc.getD p 0` when `p` not in list. -/
 private theorem den_foldl_max_not_mem (l : List (ℕ × ℕ)) (p : ℕ) (acc : RegMap)
@@ -1404,13 +1292,7 @@ theorem dmaxesMap_spec (prog : List (RegMap × RegMap)) (p : ℕ) :
     rw [ih]
     rw [den_foldl_max_getD]
 
-/-- Internal state threaded through the cycle-detecting interpreter. -/
-structure CycleState where
-  m : RegMap
-  cands : List Candidate
-  buf : CBuf (RegMap × RegMap)
-  stepsSimulated : ℕ
-  halted : Bool := false
+-- `CycleState` lives in `Fractran.Runtime.Cycle`.
 
 /-- Buffer invariant: each entry in the circular buffer corresponds to a
     `stateSplit` of an actual execution state.
@@ -2807,63 +2689,7 @@ theorem bufferInvariant_fst_wf (prog : FractranProg) (n : ℕ) (thresh : RegMap)
   rw [heq]
   exact stateSplit_wf_fst thresh m_i hwf_i
 
-/-- One step of the cycle-detecting interpreter.
-    Consumes one fuel unit: either detects a cycle and leaps, or takes one
-    normal elimination step. If the program halts (no fraction applies),
-    sets `halted := true`. -/
-def cycleStep (table : Array (List Candidate))
-    (fallback : List Candidate)
-    (thresh dmaxes : RegMap)
-    (st : CycleState) : CycleState :=
-  if st.halted then st
-  else
-  -- 1. Split current state into (data, logic) components
-  let state := stateSplit thresh st.m
-  -- 2. Check if the logic state was seen before in the buffer
-  match st.buf.getRange Prod.snd state.snd with
-  | some range =>
-    -- Cycle detected! range is newest-first, match is last element.
-    let startData := (range.getLast!).fst  -- matching (oldest) entry's data
-    let endData := state.fst               -- current state's data
-    -- history: current data + intermediate datas (excluding the match)
-    let history := endData :: (range.dropLast.map Prod.fst)
-    let c := match leapCount dmaxes history startData endData with
-      | some c => c
-      | none => 0  -- nonterminating cycle or can't compute, treat as c=0
-    if c = 0 then
-      -- Can't safely leap; reset buffer and do a normal step
-      match elimStep st.cands st.m with
-      | none => { st with halted := true }
-      | some (i, m') =>
-        let nextCands := if h : i < table.size then table[i] else fallback
-        { m := m', cands := nextCands,
-          buf := CBuf.empty st.buf.cap st.buf.hCapPos,
-          stepsSimulated := st.stepsSimulated + 1 }
-    else
-      -- Leap forward by c cycle repetitions
-      let newM := leapState startData endData state.snd c
-      { m := newM, cands := fallback,
-        buf := CBuf.empty st.buf.cap st.buf.hCapPos,
-        stepsSimulated := st.stepsSimulated + range.length * c }
-  | none =>
-    -- No cycle detected, do a normal elimination step
-    match elimStep st.cands st.m with
-    | none => { st with halted := true }
-    | some (i, m') =>
-      let nextCands := if h : i < table.size then table[i] else fallback
-      { m := m', cands := nextCands,
-        buf := st.buf.insert state,
-        stepsSimulated := st.stepsSimulated + 1 }
-
-/-- Iterate `cycleStep` for `fuel` steps. Tail-recursive. -/
-def cycleRunAux (table : Array (List Candidate))
-    (fallback : List Candidate)
-    (thresh dmaxes : RegMap) :
-    CycleState → ℕ → CycleState
-  | st, 0 => st
-  | st, fuel + 1 =>
-    cycleRunAux table fallback thresh dmaxes
-      (cycleStep table fallback thresh dmaxes st) fuel
+-- `cycleStep` and `cycleRunAux` live in `Fractran.Runtime.Cycle`.
 
 /-- Nat-level cycle-detecting interpreter conforming to the `Correct` interface.
     When still running, the simulated step count `j` may exceed `k` (because leaps

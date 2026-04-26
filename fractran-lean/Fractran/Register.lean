@@ -1,65 +1,32 @@
 import Fractran.Basic
+import Fractran.Runtime.Register
 import Mathlib.Data.Nat.Factors
 import Mathlib.Data.Nat.Factorization.Defs
 import Mathlib.Data.Nat.Factorization.Basic
 
 
 /-!
-# Register-based FRACTRAN interpreter (Impl 2)
+# Register-based FRACTRAN interpreter (proof side)
 
-Represents the FRACTRAN state as a map from prime factors to exponents, using
-`Std.TreeMap` for O(log n) lookup and update. A step becomes map arithmetic
-(add numerator exponents, subtract denominator exponents) rather than big-integer
-multiplication, avoiding redundant GCD/division work.
+Runtime data definitions (`RegMap`, `Mul`/`One`/`Div`, `unfmap`, `applicable`,
+`applyFrac`, `regStep`, `regRun`, `regRunExact`) live in
+`Fractran.Runtime.Register` so they can be compiled to C without mathlib in
+the import closure. This file extends them with:
 
-`RegMap` carries `Mul`, `Div`, and `One` instances so that fraction application
-reads as `m / den * num`, mirroring the naive `n / q * p`. The homomorphism
-lemmas (`unfmap_mul`, `unfmap_div`) are the core of the correctness proof.
+- `facmap` (uses `Nat.primeFactorsList` from mathlib)
+- the `toFinsupp` bridge from `RegMap` to `Finsupp` for proof purposes
+- homomorphism lemmas (`unfmap_mul`, `unfmap_div`, `applicable_iff_dvd`, …)
+- the `WF` predicate and its preservation lemmas
+- the `Nat`-keyed wrapper `regRunNat` and its `Correct` proof
 -/
 
-/-- Register map: maps primes to their exponents in the current FRACTRAN state.
-    Primes absent from the map have exponent 0 by convention. -/
-abbrev RegMap := Std.TreeMap ℕ ℕ compare
-
 namespace RegMap
-
-/-! ## Core operations -/
-
-/-- Exponent of prime `p` in the map (0 if absent). -/
-def get (m : RegMap) (p : ℕ) : ℕ := m.getD p 0
-
-/-- Pointwise exponent addition — corresponds to multiplication of underlying numbers. -/
-instance : Mul RegMap where
-  mul m₁ m₂ := m₁.foldl (fun acc p e => acc.insert p (acc.get p + e)) m₂
-
-/-- Empty map — corresponds to the number 1 (no prime factors). -/
-instance : One RegMap where
-  one := ∅
-
-/-- Pointwise exponent subtraction (saturating) — corresponds to division.
-    Keys that reach 0 are erased so zero-exponent primes are never stored. -/
-instance : Div RegMap where
-  div m₁ m₂ := m₂.foldl (fun acc p e =>
-    let v := acc.get p - e
-    if v = 0 then acc.erase p else acc.insert p v) m₁
 
 /-- Build a `RegMap` from a natural number via its prime factorization.
     Uses `Nat.primeFactorsList` (sorted list with repetition) so insertion order is
     deterministic and zero-exponent primes are never stored. -/
 def facmap (n : ℕ) : RegMap :=
   n.primeFactorsList.foldl (fun m p => m.insert p (m.get p + 1)) ∅
-
-/-- Reconstruct the natural number from its register representation. -/
-def unfmap (m : RegMap) : ℕ :=
-  m.foldl (fun acc p e => acc * p ^ e) 1
-
-/-- True iff every exponent in `den` is ≤ the corresponding exponent in `m`.
-    Equivalent to: `unfmap den` divides `unfmap m`. -/
-def applicable (den m : RegMap) : Bool :=
-  den.all fun p e => m.get p ≥ e
-
-/-- Apply fraction `(num, den)` to state `m`: divide out `den`, multiply in `num`. -/
-def applyFrac (num den m : RegMap) : RegMap := m / den * num
 
 /-! ## Bridge to Finsupp -/
 
@@ -517,31 +484,6 @@ lemma naiveRun_pos (prog : FractranProg) (n : ℕ) (k : ℕ) (hn : 0 < n) (hw : 
     are not repeated on every step. -/
 def FractranProg.toRegProg (prog : FractranProg) : List (RegMap × RegMap) :=
   prog.map fun (p, q) => (RegMap.facmap p, RegMap.facmap q)
-
-/-- One step of the register-based interpreter.
-    Scans for the first fraction whose denominator is applicable and applies it. -/
-def regStep (prog : List (RegMap × RegMap)) (m : RegMap) : Option RegMap :=
-  prog.findSome? fun (num, den) =>
-    if RegMap.applicable den m then some (RegMap.applyFrac num den m) else none
-
-/-- Run the register interpreter for exactly `k` steps from state `m`.
-    Returns `some m'` if still running after `k` steps, `none` if it halted earlier. -/
-def regRun (prog : List (RegMap × RegMap)) (m : RegMap) : ℕ → Option RegMap
-  | 0     => some m
-  | k + 1 => regRun prog m k >>= regStep prog
-
-/-- Halt-aware variant of `regRun`: returns the final state and the exact number
-    of successful naive steps. If the program halts before fuel runs out, the
-    step count is the count of successful steps before halting (so `j < k`);
-    otherwise `j = k`. -/
-def regRunExact (prog : List (RegMap × RegMap)) : RegMap → ℕ → Option RegMap × ℕ
-  | m, 0     => (some m, 0)
-  | m, k + 1 =>
-    match regStep prog m with
-    | none    => (none, 0)
-    | some m' =>
-      let res := regRunExact prog m' k
-      (res.1, res.2 + 1)
 
 /-- Nat-level wrapper around `regRunExact` conforming to the `Correct` interface.
     When still running, returns `(some m, k)`. When halted, returns `(none, j)`
