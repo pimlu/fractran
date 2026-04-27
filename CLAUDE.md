@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A high-performance FRACTRAN interpreter written in Haskell. FRACTRAN programs are ordered lists of fractions; evaluation repeatedly multiplies the current state by the first fraction whose product is an integer, halting when none qualify. This repo achieves 30x+ speedups over naive implementations via two algorithmic innovations: static fraction elimination and cycle detection with arithmetic "leaping."
 
-The whitepaper `termpd.tex` contains the formal proofs and benchmarks. `fractran-lean/` is a Lean 4 formalization (using mathlib) plus a CLI binary, a node demo, and a React web UI built on a WASM compile of the Lean runtime — see `fractran-lean/web-build/` (front-end) and `fractran-lean/wasm-build/` (em++ link of the Lean-generated C). The legacy Haskell-via-Asterius `web/` directory still exists but is no longer the recommended browser path.
+The whitepaper `termpd_reconstructed.tex` contains the formal proofs and benchmarks. `fractran-lean/` is a Lean 4 formalization (using mathlib) plus a CLI binary, a node demo, and a React web UI built on a WASM compile of the Lean runtime — see `fractran-lean/web-build/` (front-end) and `fractran-lean/wasm-build/` (em++ link of the Lean-generated C). The legacy Haskell-via-Asterius `web/` directory still exists but is no longer the recommended browser path.
 
 ## Building and running
 
