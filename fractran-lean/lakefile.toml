@@ -19,6 +19,10 @@ name = "Fractran"
 
 [[lean_exe]]
 name = "fractran-demo"
+root = "Demo"
+
+[[lean_exe]]
+name = "fractran"
 root = "Main"
 
 [[lean_exe]]
