@@ -2,7 +2,7 @@
 *.hi
 *.o
 *.jsmod
-fractran
+/fractran
 .vscode/
 web/node_modules
 web/gen
@@ -10,3 +10,4 @@ web/dist/*.js
 web/dist/*.js.map
 web/dist/*.wasm
 webpack-stats.json
+/tactics*.txt

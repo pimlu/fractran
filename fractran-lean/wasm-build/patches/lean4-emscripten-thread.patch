@@ -1,0 +1,20 @@
+diff --git a/src/runtime/thread.cpp b/src/runtime/thread.cpp
+index d0d67f5..f4cd9fb 100644
+--- a/src/runtime/thread.cpp
++++ b/src/runtime/thread.cpp
+@@ -120,6 +120,15 @@ struct lthread::imp {
+         }
+     }
+ };
++#elif defined(LEAN_EMSCRIPTEN)
++/* Emscripten without -pthread: no real threads. Run synchronously.
++   The task_manager's worker would block forever on its condvar, but as
++   long as the program doesn't call lean_task_spawn, no worker is created. */
++struct lthread::imp {
++    imp(runnable const & p) { p(); }
++    ~imp() {}
++    void join() {}
++};
+ #else
+ /* OSX/Linux version based on pthreads */
+ struct lthread::imp {

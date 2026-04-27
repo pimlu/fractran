@@ -1,0 +1,62 @@
+==> GMP already built (/Users/stuart/Documents/fractran/fractran-lean/wasm-build/deps/gmp-wasm/lib/libgmp.a); skipping.
+==> libuv already built (/Users/stuart/Documents/fractran/fractran-lean/wasm-build/deps/libuv-wasm/lib/libuv.a); skipping.
+==> Compiling 25 runtime cpp files
+    debug.cpp
+    thread.cpp
+    mpz.cpp
+    utf8.cpp
+    object.cpp
+    apply.cpp
+    exception.cpp
+    interrupt.cpp
+    memory.cpp
+    stackinfo.cpp
+    compact.cpp
+    init_module.cpp
+    io.cpp
+    hash.cpp
+    byteslice.cpp
+    platform.cpp
+    alloc.cpp
+    allocprof.cpp
+    sharecommon.cpp
+    stack_overflow.cpp
+    process.cpp
+    object_ref.cpp
+    mpn.cpp
+    mutex.cpp
+    libuv.cpp
+    -> /Users/stuart/Documents/fractran/fractran-lean/wasm-build/deps/lean-wasm/lib/libleanrt.a
+==> Compiling libInit.a from stage0/stdlib/Init*
+    [  50 compiled]
+    [ 100 compiled]
+    [ 150 compiled]
+    [ 200 compiled]
+    [ 250 compiled]
+    [ 300 compiled]
+    [ 350 compiled]
+    [ 400 compiled]
+    [ 450 compiled]
+    [ 500 compiled]
+    [ 550 compiled]
+    [589 compiled total]
+    -> /Users/stuart/Documents/fractran/fractran-lean/wasm-build/deps/lean-wasm/lib/libInit.a
+==> Compiling libStd.a from stage0/stdlib/Std*
+    [  50 compiled]
+    [ 100 compiled]
+    [ 150 compiled]
+    [ 200 compiled]
+    [ 250 compiled]
+    [ 300 compiled]
+    [ 350 compiled]
+    [ 400 compiled]
+    [443 compiled total]
+    -> /Users/stuart/Documents/fractran/fractran-lean/wasm-build/deps/lean-wasm/lib/libStd.a
+
+==> WASM dependencies built:
+    /Users/stuart/Documents/fractran/fractran-lean/wasm-build/deps/lean-wasm/lib/libleanrt.a
+    /Users/stuart/Documents/fractran/fractran-lean/wasm-build/deps/lean-wasm/lib/libInit.a
+    /Users/stuart/Documents/fractran/fractran-lean/wasm-build/deps/lean-wasm/lib/libStd.a
+    /Users/stuart/Documents/fractran/fractran-lean/wasm-build/deps/gmp-wasm/lib/libgmp.a
+
+Now run `make` from /Users/stuart/Documents/fractran/fractran-lean/wasm-build to link the demo.

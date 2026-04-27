@@ -1,0 +1,1 @@
+../../../wasm-build/build/fractran-web.js

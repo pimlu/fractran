@@ -1,0 +1,34 @@
+name = "fractran"
+version = "0.1.0"
+keywords = ["math"]
+defaultTargets = ["Fractran"]
+
+[leanOptions]
+pp.unicode.fun = true # pretty-prints `fun a ↦ b`
+relaxedAutoImplicit = false
+weak.linter.mathlibStandardSet = true
+maxSynthPendingDepth = 3
+
+[[require]]
+name = "mathlib"
+scope = "leanprover-community"
+rev = "v4.30.0-rc2"
+
+[[lean_lib]]
+name = "Fractran"
+
+[[lean_exe]]
+name = "fractran-demo"
+root = "Demo"
+
+[[lean_exe]]
+name = "fractran"
+root = "Main"
+
+[[lean_exe]]
+name = "fractran-runtime-demo"
+root = "MainRuntime"
+
+[[lean_exe]]
+name = "fractran-web-lib"
+root = "MainWeb"
