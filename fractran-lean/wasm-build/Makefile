@@ -59,7 +59,8 @@ LEAN_MODULES_SHARED := \
     Fractran/Runtime/Register \
     Fractran/Runtime/CBuf \
     Fractran/Runtime/Elim \
-    Fractran/Runtime/Cycle
+    Fractran/Runtime/Cycle \
+    Fractran/Runtime/Parse
 
 # Node target: hardcoded Hamming demo. MainRuntime defines `def main`.
 LEAN_MODULES_NODE := MainRuntime $(LEAN_MODULES_SHARED)

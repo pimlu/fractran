@@ -6,7 +6,6 @@ import TextField from '@mui/material/TextField';
 import Box from '@mui/material/Box';
 import MenuItem from '@mui/material/MenuItem';
 import type { RunMessage, WorkerOutgoing } from './fractran.worker.ts';
-import { buildWireInput } from './wire.ts';
 import { examples, DEFAULT_EXAMPLE } from './examples.ts';
 import fractranWasmUrl from './wasm/fractran-web.wasm?url';
 
@@ -106,19 +105,6 @@ export default function App() {
     setErrorMsg('');
     setDecoded(null);
 
-    let programInput: string;
-    try {
-      programInput = buildWireInput({
-        cyclen: BigInt(cyclenSrc),
-        programSrc,
-        inputSrc,
-      });
-    } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : String(err));
-      setStatus('error');
-      return;
-    }
-
     setStatus('running');
     const worker = new Worker(
       new URL('./fractran.worker.ts', import.meta.url),
@@ -146,7 +132,13 @@ export default function App() {
           break;
       }
     };
-    const initMsg: RunMessage = { type: 'run', wasmBinary, programInput };
+    const initMsg: RunMessage = {
+      type: 'run',
+      wasmBinary,
+      cyclen: cyclenSrc,
+      programSrc,
+      inputSrc,
+    };
     worker.postMessage(initMsg);
   };
 

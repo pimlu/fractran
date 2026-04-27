@@ -6,7 +6,9 @@ import fractranModuleUrl from './wasm/fractran-web.js?url';
 export interface RunMessage {
   type: 'run';
   wasmBinary: ArrayBuffer;
-  programInput: string;
+  cyclen: string;
+  programSrc: string;
+  inputSrc: string;
 }
 
 export type WorkerOutgoing =
@@ -61,8 +63,8 @@ ctx.onmessage = async (e: MessageEvent<RunMessage>) => {
     const ptr = instance.ccall(
       'fractran_run',
       'number',
-      ['string'],
-      [e.data.programInput],
+      ['string', 'string', 'string'],
+      [e.data.cyclen, e.data.programSrc, e.data.inputSrc],
     );
     const text = instance.UTF8ToString(ptr);
     instance._free(ptr);
