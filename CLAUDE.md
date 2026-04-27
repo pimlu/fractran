@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A high-performance FRACTRAN interpreter written in Haskell. FRACTRAN programs are ordered lists of fractions; evaluation repeatedly multiplies the current state by the first fraction whose product is an integer, halting when none qualify. This repo achieves 30x+ speedups over naive implementations via two algorithmic innovations: static fraction elimination and cycle detection with arithmetic "leaping."
 
-The whitepaper `termpd.tex` contains the formal proofs and benchmarks. `fractran-lean/` is a Lean 4 formalization (using mathlib). `web/` is a browser build using Asterius (Haskell-to-WASM compiler).
+The whitepaper `termpd.tex` contains the formal proofs and benchmarks. `fractran-lean/` is a Lean 4 formalization (using mathlib) plus a CLI binary, a node demo, and a React web UI built on a WASM compile of the Lean runtime — see `fractran-lean/web-build/` (front-end) and `fractran-lean/wasm-build/` (em++ link of the Lean-generated C). The legacy Haskell-via-Asterius `web/` directory still exists but is no longer the recommended browser path.
 
 ## Building and running
 
@@ -107,7 +107,11 @@ Fractran/
   Runtime/CBuf.lean         # circular buffer
   Runtime/Elim.lean         # optTable, elimStep — static fraction elimination
   Runtime/Cycle.lean        # cycleStep, cycleRunFromRegProg, leapState, dthreshMap
-  Basic.lean, Register.lean, CBuf.lean, Elim.lean, Cycle.lean   # proofs
+  Runtime/Parse.lean        # parser for the surface syntax (program + state)
+  Runtime/JsBridge.lean     # runWithLimit + @[export] fractran_run_lean entry point
+  Basic.lean, Register.lean, CBuf.lean, Elim.lean, Cycle.lean,
+  JsBridge.lean             # proofs (incl. detectInfiniteLoop_sound)
+  ParseTests.lean           # native_decide test suite for the parser
 ```
 
 ### What's proven
@@ -132,11 +136,14 @@ The proof strategy bridges computation (`TreeMap`) and reasoning (`Finsupp`/`Nat
 
 `cycleRunFromRegProg` is the runtime-callable entry: takes a pre-factored program (`List (RegMap × RegMap)`) and a starting `RegMap`, returns a `CycleState`. The `Nat`-keyed wrapper `cycleRunNat` lives on the proof side because it uses `RegMap.facmap` (which uses `Nat.primeFactorsList` from mathlib).
 
-### Demos
+### Entry points (lakefile.toml targets)
 
-`Main.lean` (proof-side, target `fractran-demo`) runs three demos — a small cycle test, Hamming weight of `2^(2^128 - 1)` (popcount = 128), and a 24-fraction self-interpreter.
-
-`MainRuntime.lean` (runtime-only, target `fractran-runtime-demo`) runs just the Hamming demo with the program pre-factored via `RegMap.ofFactors`. Its import closure has zero mathlib — it's the entry point for the WASM build.
+| Target | Source | Purpose |
+|---|---|---|
+| `fractran` | `Main.lean` | The CLI: parses a program file + initial-state arg via `Fractran.Runtime.Parse`, runs `Runner.cycleRunUntilHalt`, prints the result. Usage: `fractran <prog-file> <state> [cyclen]`. |
+| `fractran-demo` | `Demo.lean` | Hardcoded demos — cycle test, Hamming weight of `2^(2^128 - 1)`, and the 24-fraction self-interpreter. Proof-side build (full mathlib import closure). |
+| `fractran-runtime-demo` | `MainRuntime.lean` | Runtime-only Hamming demo with the program pre-factored via `RegMap.ofFactors`. Zero mathlib in the import closure — sanity-check entry point for the WASM build. |
+| `fractran-web-lib` | `MainWeb.lean` | Empty `def main` (just initializes the Lean runtime). Pulled into the WASM artifact alongside `Fractran.Runtime.JsBridge`, which `@[export]`s `fractran_run_lean : String → String → String → String` (cyclen / program / initial state, all parsed by `Fractran.Runtime.Parse`). |
 
 ### WASM build (`fractran-lean/wasm-build/`)
 

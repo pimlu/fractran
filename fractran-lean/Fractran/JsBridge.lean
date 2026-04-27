@@ -20,14 +20,14 @@ Neither exit changes the state, so the `naiveRun` invariant carried by
 JS bridge runner. The structure of the proof mirrors `cycleRunAux_correct`
 exactly, with two extra "no step taken" branches that are trivial.
 
-## What's not proven here
+## Soundness of infinite-loop detection
 
-`detectInfiniteLoop_sound` (below) — when `detectInfiniteLoop` returns
-`some k`, the program from this state never halts. Currently a `sorry`.
-The mathematical content extends the existing `cycle_properties` /
-`leap_correct` chain (which handles a *specific finite* number of cycle
-repetitions) to "any number of repetitions are safe," which then implies
-`naiveRun prog n j ≠ none` for all `j ≥ st.stepsSimulated`.
+`detectInfiniteLoop_sound` (below) proves that when `detectInfiniteLoop`
+returns `some k`, the program from this state never halts. The proof
+extends the existing `cycle_properties` / `leap_correct` chain (which
+handles a *specific finite* number of cycle repetitions) to "any number
+of repetitions are safe," via `iterated_cycle_per_reg`, then concludes
+that `naiveRun prog n j ≠ none` for all `j ≥ st.stepsSimulated`.
 -/
 
 namespace Fractran.JsBridge.Runner

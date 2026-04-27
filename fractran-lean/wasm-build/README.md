@@ -98,15 +98,30 @@ Both stored under `patches/`, applied idempotently by `build-deps.sh`:
 
 ## Calling from the browser
 
-The default link exports just `_main`. To expose `cycleRunFromRegProg` (or
-any other Lean function) to JS:
+The web target (`fractran-web.{js,wasm}`) exposes `_fractran_run`, a thin
+C wrapper (`bridge.cpp`) around the Lean export
+`fractran_run_lean : String → String → String → String` defined in
+`Fractran.Runtime.JsBridge`. The three string args are cyclen, program
+source, and initial-state source; Lean parses them via
+`Fractran.Runtime.Parse` and runs `Runner.cycleRunUntilHalt`.
 
-1. Add `@[export "fractran_run"] def fractran_run := cycleRunFromRegProg`
-   (or similar) in a Lean file.
-2. Add the C name to `-sEXPORTED_FUNCTIONS=['_main','_fractran_run']` in the
-   Makefile's `LDFLAGS`.
-3. Lean's compiler emits one C function per `@[export]` binding.
-4. Call from JS via `Module.ccall('fractran_run', ...)`.
+Wire-up:
+
+1. The `@[export fractran_run_lean]` attribute on the Lean def causes the
+   Lean compiler to emit a `lean_object* fractran_run_lean(...)` symbol.
+2. `bridge.cpp` defines `fractran_run(const char*, const char*, const char*)`,
+   marshalling C strings to Lean strings via `lean_mk_string` and copying
+   the result string out to a `malloc`'d buffer the caller frees.
+3. The Makefile passes `--export=fractran_run` (and `_main`) via
+   `-sEXPORTED_FUNCTIONS`.
+4. JS side: `Module.ccall('fractran_run', 'number', ['string', 'string',
+   'string'], [cyclen, programSrc, inputSrc])`. The returned pointer is a
+   `char*` containing `OK ...` or `ERR ...`; read with
+   `Module.UTF8ToString(ptr)` and free with `Module._free(ptr)`.
+
+To expose any other Lean function the same way, add an `@[export]` binding,
+list its C name in `-sEXPORTED_FUNCTIONS`, and (for non-trivial argument
+types) add a marshalling shim to `bridge.cpp`.
 
 ## Project layout
 
