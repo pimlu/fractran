@@ -87,6 +87,13 @@ lemma getD_of_mem_toList (m : RegMap) {p e : ℕ} (h : (p, e) ∈ m.toList) :
   have hmem := Std.TreeMap.mem_toList_iff_getElem?_eq_some.mp h
   rw [Std.TreeMap.getD_eq_getD_getElem?, hmem]; rfl
 
+/-- Convert `p ∈ m` to the canonical `(p, m.getD p 0) ∈ m.toList` form. -/
+lemma mem_toList_of_mem (m : RegMap) {p : ℕ} (hp : p ∈ m) :
+    (p, m.getD p 0) ∈ m.toList :=
+  Std.TreeMap.mem_toList_iff_getElem?_eq_some.mpr
+    (Std.TreeMap.getElem?_eq_some_getD_of_contains
+      ((Std.TreeMap.contains_iff_mem).mpr hp))
+
 private lemma toList_prod_eq_keys_prod (m : RegMap) :
     (m.toList.map (fun (p, e) => p ^ e)).prod =
     m.keys.toFinset.prod (fun p => p ^ (m.getD p 0)) := by
@@ -157,12 +164,8 @@ private lemma foldl_cond_sum_none (l : List (ℕ × ℕ)) (p : ℕ) (init : ℕ)
 private lemma toList_foldl_sum_eq_getD (m : RegMap) (p : ℕ) :
     m.toList.foldl (fun acc x => if x.1 = p then acc + x.2 else acc) 0 = m.getD p 0 := by
   by_cases hp : p ∈ m
-  · -- p is in the map: get value and find entry in toList
-    have hget := Std.TreeMap.getElem?_eq_some_getD_of_contains
-                   ((Std.TreeMap.contains_iff_mem).mpr hp) (fallback := 0)
-    have hmem := (Std.TreeMap.mem_toList_iff_getElem?_eq_some).mpr hget
-    -- Split the list around the matching entry
-    obtain ⟨l₁, l₂, hlist⟩ := List.mem_iff_append.mp hmem
+  · -- p is in the map: split toList around the matching entry
+    obtain ⟨l₁, l₂, hlist⟩ := List.mem_iff_append.mp (mem_toList_of_mem m hp)
     -- p doesn't appear as a key in l₁ or l₂ (nodup)
     have hnodup : (m.toList.map Prod.fst).Nodup := by
       rw [Std.TreeMap.map_fst_toList_eq_keys]; exact Std.TreeMap.nodup_keys
@@ -311,27 +314,27 @@ lemma wf_applyFrac (num den m : RegMap) (hnum : WF num) (hm : WF m) :
 
 /-! ## Factorization bridge -/
 
+/-- For a WF map, every prime in the `toFinsupp` support is prime. -/
+private lemma prime_of_mem_toFinsupp_support {m : RegMap} (hm : WF m) {p : ℕ}
+    (hp : p ∈ (toFinsupp m).support) : p.Prime := by
+  have hne : (toFinsupp m) p ≠ 0 := Finsupp.mem_support_iff.mp hp
+  simp only [toFinsupp_apply] at hne
+  exact hm p (by by_contra h; exact hne (Std.TreeMap.getD_eq_fallback h))
+
 lemma unfmap_pos (m : RegMap) (hm : WF m) : 0 < unfmap m := by
-  have h : unfmap m ≠ 0 := by
+  have : unfmap m ≠ 0 := by
     rw [unfmap_eq_toFinsupp_prod, Finsupp.prod_ne_zero_iff]
-    intro p hp
-    apply pow_ne_zero
-    have hsupp : (toFinsupp m) p ≠ 0 := Finsupp.mem_support_iff.mp hp
-    simp only [toFinsupp_apply] at hsupp
-    exact (hm p (by by_contra h'; exact hsupp (Std.TreeMap.getD_eq_fallback h'))).pos.ne'
+    exact fun p hp => pow_ne_zero _ (prime_of_mem_toFinsupp_support hm hp).pos.ne'
   omega
 
 lemma factorization_unfmap_eq_toFinsupp (m : RegMap) (hm : WF m) :
     (unfmap m).factorization = toFinsupp m := by
-  have hsupp_prime : ∀ p ∈ (toFinsupp m).support, p.Prime := fun p hp => by
-    have hne : (toFinsupp m) p ≠ 0 := Finsupp.mem_support_iff.mp hp
-    simp only [toFinsupp_apply] at hne
-    exact hm p (by by_contra h; exact hne (Std.TreeMap.getD_eq_fallback h))
   rw [unfmap_eq_toFinsupp_prod]
   simp only [Finsupp.prod]
-  rw [Nat.factorization_prod (fun p hp => pow_ne_zero _ (hsupp_prime p hp).pos.ne'),
-      Finset.sum_congr rfl (fun p hp => (hsupp_prime p hp).factorization_pow)]
-  change (toFinsupp m).sum Finsupp.single = toFinsupp m
+  rw [Nat.factorization_prod (fun p hp =>
+        pow_ne_zero _ (prime_of_mem_toFinsupp_support hm hp).pos.ne'),
+      Finset.sum_congr rfl (fun p hp =>
+        (prime_of_mem_toFinsupp_support hm hp).factorization_pow)]
   exact Finsupp.sum_single (toFinsupp m)
 
 /-- Two WF maps with the same `unfmap` agree on all `getD` values. -/
@@ -359,11 +362,7 @@ lemma applicable_iff_dvd (den m : RegMap) (hden : WF den) (hm : WF m) :
   constructor
   · intro h p
     by_cases hp : p ∈ den
-    · have hmem : (p, den.getD p 0) ∈ den.toList :=
-        (Std.TreeMap.mem_toList_iff_getElem?_eq_some).mpr
-          (Std.TreeMap.getElem?_eq_some_getD_of_contains
-            (Std.TreeMap.contains_iff_mem.mpr hp))
-      simpa using h ⟨p, den.getD p 0⟩ hmem
+    · simpa using h ⟨p, den.getD p 0⟩ (mem_toList_of_mem den hp)
     · simp [Std.TreeMap.getD_eq_fallback hp]
   · intro h ⟨p, e⟩ hmem
     have he : den.getD p 0 = e := getD_of_mem_toList den hmem

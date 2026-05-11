@@ -113,11 +113,7 @@ private theorem not_mem_of_sharesKey_false {num den_e : RegMap} {p : ℕ}
   intro hp_num
   simp only [RegMap.sharesKey] at hnokey
   rw [List.any_eq_false] at hnokey
-  have hmem : (p, num.getD p 0) ∈ num.toList :=
-    Std.TreeMap.mem_toList_iff_getElem?_eq_some.mpr
-      (Std.TreeMap.getElem?_eq_some_getD_of_contains
-        (Std.TreeMap.contains_iff_mem.mpr hp_num))
-  have := hnokey _ hmem
+  have := hnokey _ (RegMap.mem_toList_of_mem num hp_num)
   simp [Std.TreeMap.contains_iff_mem.mpr hp] at this
 
 /-- If `¬sharesKey num den_e` and `¬applicable den_e m`, then
@@ -203,15 +199,17 @@ theorem optTable_preserves_invariant (prog : List (RegMap × RegMap))
   have hidx : idx = i := hfire.1
   have hm' : m' = RegMap.applyFrac num_i den_i m := hfire.2.symm
   rw [hidx] at hdecomp
-  -- Step 3: pre.length = i (the matched entry is at position i)
-  have hlen_pre : pre.length = i := by
-    have h1 : (prog.zipIdx)[pre.length]? = some ((num_i, den_i), i) := by
-      rw [hdecomp]; simp
-    rw [getElem?_zipIdx] at h1
-    have hlt : pre.length < prog.length := by
-      have := congrArg List.length hdecomp; simp [length_zipIdx] at this; omega
-    simp [hlt] at h1; omega
-  -- Step 4: All entries in pre (= take i allCandidates) are inapplicable on m
+  -- Step 3: pre.length = i and (num_i, den_i) = prog[i].
+  have hlt : pre.length < prog.length := by
+    have := congrArg List.length hdecomp; simp [length_zipIdx] at this; omega
+  have h_at_pre : (prog.zipIdx)[pre.length]? = some ((num_i, den_i), i) := by
+    rw [hdecomp]; simp
+  rw [getElem?_zipIdx] at h_at_pre
+  simp only [zero_add, hlt, getElem?_pos, Option.map_some, Option.some.injEq,
+    Prod.mk.injEq] at h_at_pre
+  have hlen_pre : pre.length = i := h_at_pre.2
+  have hprog_get : (num_i, den_i) = prog[i] := hlen_pre ▸ h_at_pre.1.symm
+  -- Step 4: pre = take i allCandidates, hence all entries inapplicable on m.
   have hpre_eq : pre = (allCandidates prog).take i := by
     have : (allCandidates prog).take i = (pre ++ ((num_i, den_i), i) :: post).take pre.length := by
       rw [← hdecomp, ← hlen_pre]; rfl
@@ -221,40 +219,17 @@ theorem optTable_preserves_invariant (prog : List (RegMap × RegMap))
     intro entry hmem; rw [← hpre_eq] at hmem
     have := hpre_none entry hmem
     intro hcontra; simp [hcontra] at this
-  -- Step 5: (num_i, den_i) = prog[i]
-  have hprog_get : (num_i, den_i) = prog[i] := by
-    have h1 : (prog.zipIdx)[i]? = some ((num_i, den_i), i) := by
-      rw [hdecomp, ← hlen_pre]; simp
-    rw [getElem?_zipIdx] at h1
-    simp [hi] at h1; exact h1.symm
   -- Step 6: Characterize optTable[i] membership
   have hi_ot : i < (optTable prog).size := by rw [optTable_size]; exact hi
   -- Key lemma: entry ∈ optTable[i] ↔ entry ∈ filter f (take i ac) ∨ entry ∈ drop i ac
   have hmem_opt : ∀ entry, entry ∈ (optTable prog)[i]'hi_ot ↔
       (entry ∈ (allCandidates prog).drop i ∨
        (entry ∈ (allCandidates prog).take i ∧
-        RegMap.sharesKey num_i entry.1.2 = true)) := by
-    intro entry
-    simp only [optTable, Array.getElem_ofFn, splitAt_eq]
-    constructor
-    · intro h
-      rw [mem_append] at h
-      rcases h with h | h
-      · right
-        rw [mem_filter] at h
-        refine ⟨h.1, ?_⟩
-        -- sharesKey equivalence: prog[⟨i,⋯⟩].1 = num_i
-        convert h.2 using 2
-        exact hprog_get.symm ▸ rfl
-      · exact Or.inl h
-    · intro h
-      rw [mem_append]
-      rcases h with h | ⟨hmem, hshare⟩
-      · exact Or.inr h
-      · left; rw [mem_filter]
-        refine ⟨hmem, ?_⟩
-        convert hshare using 2
-        exact hprog_get.symm ▸ rfl
+        RegMap.sharesKey num_i entry.1.2 = true)) := fun entry => by
+    simp only [optTable, Array.getElem_ofFn, splitAt_eq, mem_append, mem_filter]
+    rw [show prog[(⟨i, hi⟩ : Fin prog.length)].1 = num_i from
+          (congr_arg Prod.fst hprog_get).symm]
+    tauto
   refine ⟨?_, ?_⟩
   · -- Sublist: optTable[i] <+ allCandidates prog
     -- optTable[i] = filter f (take i ac) ++ drop i ac
